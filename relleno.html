@@ -196,7 +196,6 @@ function pintarPrincipal(ctx) {
       { t: "Donante", f: (f) => esc(f.donante) + " · " + esc(f.nombre_donante || "") },
       { t: "Correlación spearman", num: true, f: (f) => num(f.rho, 4) },
       { t: "Solapamiento", num: true, f: (f) => miles(f.n_solapamiento) },
-      { t: "p", num: true, f: (f) => num(f.p, 4) },
     ]);
   }
 }
