@@ -146,9 +146,6 @@ function pintarPrincipal(ctx) {
   caja.innerHTML =
     '<div class="tarjeta">' +
       "<h2>" + esc(ctx.codigo) + " · " + esc(ctx.nombre || "") + "</h2>" +
-      '<div class="sub">' + esc(etiquetaVar(ctx.variable)) + " · método " +
-        esc(ctx.metodo || "—") +
-        (s.compuerta == null ? "" : " · compuerta " + esc(s.compuerta)) + "</div>" +
       '<div class="barra-flujo">' +
         '<div style="width:' + pct(s.n_observados) + ';background:#3c3a36" title="observados"></div>' +
         '<div style="width:' + pct(s.dias_estimados) + ';background:#c98a2b" title="estimados"></div>' +
@@ -197,10 +194,9 @@ function pintarPrincipal(ctx) {
   if (hayDonantes) {
     pintarTabla("t-donantes-serie", suyos.slice().sort((a, b) => b.rho - a.rho), [
       { t: "Donante", f: (f) => esc(f.donante) + " · " + esc(f.nombre_donante || "") },
-      { t: "ρ", num: true, f: (f) => num(f.rho, 4) },
+      { t: "Correlación spearman", num: true, f: (f) => num(f.rho, 4) },
       { t: "Solapamiento", num: true, f: (f) => miles(f.n_solapamiento) },
       { t: "p", num: true, f: (f) => num(f.p, 4) },
-      { t: "Se dibuja", f: (f) => (arr(ctx.donantes).some((d) => d.codigo === f.donante) ? "sí" : "—") },
     ]);
   }
 }
@@ -319,7 +315,7 @@ function refrescarDonantes() {
     { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
     { t: "Estación", f: (f) => esc(f.estacion) + " · " + esc(NOMBRE[f.estacion] || "") },
     { t: "Donante", f: (f) => esc(f.donante) + " · " + esc(f.nombre_donante || "") },
-    { t: "ρ", num: true, f: (f) => num(f.rho, 4) },
+    { t: "Correlación spearman", num: true, f: (f) => num(f.rho, 4) },
     { t: "Solapamiento", num: true, f: (f) => miles(f.n_solapamiento) },
     { t: "Admitida", f: (f) => '<span class="pill ' + (f.admitida ? "si" : "no") + '">' + (f.admitida ? "sí" : "no") + "</span>" },
     { t: "Motivo de exclusión", k: "motivo_exclusion" },
