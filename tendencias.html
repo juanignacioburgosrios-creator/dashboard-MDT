@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Tendencias</title>
+<link rel="stylesheet" href="estilo.css">
+<style>
+  .ventanas { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1000px) { .ventanas { grid-template-columns: 1fr; } }
+  .cifra { font-family: var(--serif); font-size: 17px; }
+  .caja-ventana { border: 1px solid var(--borde); border-radius: 5px; padding: 12px 14px; }
+  .caja-ventana.destacada { border-color: #cdd9e2; background: #fafcfd; }
+  .par { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px;
+         padding: 2px 0; border-bottom: 1px dotted #eceae5; }
+  .par span:first-child { color: var(--suave); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Tendencias</h1>
+  <div class="kpis" id="kpis"></div>
+</header>
+
+<nav>
+  <button data-panel="series" class="activa">Por estación</button>
+  <button data-panel="figuras">Figuras</button>
+  <button data-panel="mapas">Mapas</button>
+  <button data-panel="resumen">Resumen por serie</button>
+  <button data-panel="regional">Señal regional</button>
+  <button data-panel="exclusiones">Exclusiones</button>
+</nav>
+
+<main>
+  <section id="panel-series">
+    <div class="columnas">
+      <aside>
+        <div class="cabecera">
+          <div class="titulo">Variable</div>
+          <select id="f-variable"></select>
+          <div style="margin-top:8px"><select id="f-serie"></select></div>
+          <div style="margin-top:8px"><select id="f-sig"></select></div>
+        </div>
+        <div class="catalogo" id="catalogo"></div>
+      </aside>
+      <div class="contenido" id="principal"></div>
+    </div>
+  </section>
+
+  <section id="panel-figuras" class="oculta">
+    <div class="filtros">
+      <div class="campo"><label>Variable</label><select id="ff-variable"></select></div>
+      <div class="campo"><label>Serie derivada</label><select id="ff-serie"></select></div>
+      <div class="campo"><label>&nbsp;</label><span class="sub" id="ff-conteo"></span></div>
+    </div>
+    <div id="galeria"></div>
+  </section>
+
+  <section id="panel-mapas" class="oculta">
+    <div class="filtros">
+      <div class="campo"><label>Variable</label><select id="fm-variable"></select></div>
+      <div class="campo"><label>Serie derivada</label><select id="fm-serie"></select></div>
+      <div class="campo"><label>&nbsp;</label><span class="sub" id="fm-conteo"></span></div>
+    </div>
+    <div id="galeria-mapas"></div>
+  </section>
+
+  <section id="panel-resumen" class="oculta">
+    <div class="filtros">
+      <div class="campo"><label>Ventana</label><select id="fr-ventana"></select></div>
+    </div>
+    <div class="tabla-caja"><table id="t-resumen"></table></div>
+  </section>
+  <section id="panel-regional" class="oculta">
+    <div class="tabla-caja"><table id="t-regional"></table></div>
+  </section>
+  <section id="panel-exclusiones" class="oculta">
+    <div class="tabla-caja"><table id="t-exclusiones"></table></div>
+  </section>
+</main>
+
+<script src="comun.js"></script>
+<script>
+"use strict";
+cargarDatos(["tendencias.js", "tendencias_series.js"], iniciar);
+
+function iniciar() {
+
+const VENTANA = filas(TENDENCIAS.ventana);
+const COMPLETO = filas(TENDENCIAS.completo);
+const REGIONAL = filas(TENDENCIAS.regional);
+const ALFA = TENDENCIAS.significancia;
+const PER = TENDENCIAS.ventana_periodo;
+const ROTULO_V = PER.inicio + "–" + PER.fin;
+
+const ETIQUETA = {};
+arr(TENDENCIAS.variables).forEach((v) => { ETIQUETA[v.codigo] = v.etiqueta; });
+const etiquetaVar = (v) => ETIQUETA[v] || v;
+const UNIDAD = {};
+arr(TENDENCIAS.variables).forEach((v) => { UNIDAD[v.codigo] = v.unidad; });
+
+const POR_CLAVE_C = {};
+COMPLETO.forEach((f) => { POR_CLAVE_C[f.clave] = f; });
+
+const VALORES = {};
+(function () {
+  const c = TENDENCIAS_SERIES;
+  for (let i = 0; i < c.clave.length; i++) {
+    (VALORES[c.clave[i]] = VALORES[c.clave[i]] || []).push([c.anio[i], c.valor[i]]);
+  }
+})();
+
+const T = TENDENCIAS.totales;
+pintarKpis("kpis", [
+  [T.n_series, "series derivadas"],
+  [T.n_sig_ventana, "significativas " + ROTULO_V],
+  [T.n_sig_completo, "significativas período completo"],
+  [T.n_regiones, "regiones"],
+  [T.n_sig_regional, "regionales significativas"],
+  ["p < " + ALFA, "criterio · Hamed-Rao"],
+]);
+pestanias();
+
+opciones("f-variable", unicos(VENTANA.map((s) => s.variable)), "Todas las variables", etiquetaVar);
+opciones("f-serie", unicos(VENTANA.map((s) => s.serie_derivada)), "Todas las series derivadas");
+opciones("f-sig", ["significativas en " + ROTULO_V, "significativas en período completo",
+                   "significativas en ambas", "no significativas"], "Todas");
+
+let sel = null;
+
+function filtradas() {
+  const v = document.getElementById("f-variable").value;
+  const sd = document.getElementById("f-serie").value;
+  const sg = document.getElementById("f-sig").value;
+  return VENTANA.filter((f) => {
+    if (v && f.variable !== v) return false;
+    if (sd && f.serie_derivada !== sd) return false;
+    if (!sg) return true;
+    const c = POR_CLAVE_C[f.clave];
+    const a = f.significativa === true, b = c && c.significativa === true;
+    if (sg.indexOf("ambas") >= 0) return a && b;
+    if (sg.indexOf("no significativas") >= 0) return !a && !b;
+    if (sg.indexOf("completo") >= 0) return b;
+    return a;
+  });
+}
+
+function pintarCatalogo() {
+  const visibles = filtradas();
+  let html = "", anterior = null;
+  visibles.forEach((f) => {
+    const grupo = etiquetaVar(f.variable) + " · " + f.serie_derivada;
+    if (grupo !== anterior) {
+      html += '<div class="grupo">' + esc(grupo) + "</div>";
+      anterior = grupo;
+    }
+    const c = POR_CLAVE_C[f.clave];
+    const marca = (d) => {
+      if (!d || d.significativa !== true) return "";
+      const sube = d.z_veredicto > 0;
+      return '<b class="' + (sube ? "o" : "v") + '" title="' +
+        (sube ? "asciende" : "desciende") + ", p = " + num(d.p_veredicto, 4) + '">' +
+        (sube ? "▲" : "▼") + "</b>";
+    };
+    html += '<div class="item' + (sel === f.clave ? " sel" : "") + '" data-clave="' + esc(f.clave) + '">' +
+      '<span class="cod">' + esc(f.estacion) + "</span>" +
+      '<span class="nom">' + esc(f.nombre || "") + "</span>" +
+      '<span class="cuenta">' + marca(f) + marca(c) + "</span></div>";
+  });
+  document.getElementById("catalogo").innerHTML = html || '<div class="vacio">Sin series</div>';
+  document.querySelectorAll("#catalogo .item").forEach((el) => {
+    el.onclick = () => { sel = el.dataset.clave; pintarCatalogo(); pintarPrincipal(); };
+  });
+}
+["f-variable", "f-serie", "f-sig"].forEach((id) => {
+  document.getElementById(id).onchange = () => { pintarCatalogo(); };
+});
+
+function bloqueVentana(d, rotulo, unidad, destacada) {
+  if (!d) return '<div class="caja-ventana"><h3>' + esc(rotulo) + "</h3>" +
+    '<div class="vacio">No testeada.</div></div>';
+  if (d.aplicable === false) {
+    return '<div class="caja-ventana"><h3>' + esc(rotulo) + "</h3>" +
+      '<div class="sub">No aplicable: ' + esc(d.motivo || "") + "</div></div>";
+  }
+  const sube = d.z_veredicto > 0;
+  return '<div class="caja-ventana' + (destacada ? " destacada" : "") + '">' +
+    "<h3>" + esc(rotulo) + "</h3>" +
+    '<div style="margin-bottom:8px">' +
+      '<span class="pill ' + (d.significativa ? (sube ? "sube" : "baja") : "no") + '">' +
+        (d.significativa ? (sube ? "asciende" : "desciende") : "sin señal") + "</span> " +
+      '<span class="cifra">p = ' + num(d.p_veredicto, 4) + "</span></div>" +
+    par("Período", d.anio_inicio + "–" + d.anio_fin + " (" + d.n_anios + " años)") +
+    par("Pendiente de Sen", num(d.pendiente_por_decada, 3) + " " + esc(unidad) + "/década") +
+    par("IC 95 %", num(d.ic_inferior_decada, 3) + " a " + num(d.ic_superior_decada, 3) +
+        " " + esc(unidad) + "/década") +
+    par("Normalizada", num(d.pendiente_sd_por_decada, 3) + " sd/década") +
+    par("Z de Hamed-Rao", num(d.z_veredicto, 3)) +
+    par("τ de Kendall", num(d.tau_b, 3)) +
+    par("n/n*", num(d.n_sobre_n_estrella, 3)) +
+    par("ρ₁", num(d.rho_1, 3)) +
+    par("Densidad", num(d.densidad, 2) + " · hueco máximo " + d.hueco_interno_maximo + " años") +
+    par("Mann-Kendall sin corregir", "p = " + num(d.p_mann_kendall, 4)) +
+    par("Preblanqueo TFPW", "p = " + num(d.p_tfpw, 4)) +
+    par("Banda alterna", "p = " + num(d.p_banda_alterna, 4)) +
+    par("Sin años de relleno crítico", "p = " + num(d.p_sin_relleno_critico, 4)) +
+    par("Quiebre de Pettitt", d.anio_quiebre_pettitt == null ? "—" :
+        d.anio_quiebre_pettitt + " (p = " + num(d.p_pettitt, 4) + ")") +
+    "</div>";
+}
+const par = (a, b) => '<div class="par"><span>' + esc(a) + "</span><span>" + b + "</span></div>";
+
+function pintarPrincipal() {
+  const caja = document.getElementById("principal");
+  if (!sel) {
+    caja.innerHTML = '<div class="tarjeta"><div class="vacio">Elija una serie en el catálogo.</div></div>';
+    return;
+  }
+  const v = VENTANA.find((x) => x.clave === sel);
+  const c = POR_CLAVE_C[sel];
+  const unidad = UNIDAD[v.variable] || "";
+
+  caja.innerHTML =
+    '<div class="tarjeta">' +
+      "<h2>" + esc(v.estacion) + " · " + esc(v.nombre || "") + "</h2>" +
+      '<div class="sub">' + esc(etiquetaVar(v.variable)) + " · " + esc(v.serie_derivada) +
+        (v.es_indice_primario ? " · serie primaria" : "") + "</div>" +
+      '<div id="g-serie" style="margin-top:12px"></div>' +
+      '<div class="leyenda" style="margin-top:6px">' +
+        '<span><span class="punto" style="background:#3c3a36"></span>valor anual</span>' +
+        '<span><span class="punto" style="background:#1f5f8b"></span>Sen ' + ROTULO_V + "</span>" +
+        '<span><span class="punto" style="background:#c98a2b"></span>Sen período completo</span>' +
+      "</div>" +
+    "</div>" +
+    '<div class="ventanas">' +
+      bloqueVentana(v, "Ventana " + ROTULO_V, unidad, true) +
+      bloqueVentana(c, "Período completo", unidad, false) +
+    "</div>";
+
+  document.getElementById("g-serie").innerHTML = svgSerie(sel, v, c);
+}
+
+function svgSerie(clave, v, c) {
+  const puntos = (VALORES[clave] || []).slice().sort((a, b) => a[0] - b[0]);
+  if (!puntos.length) return '<div class="vacio">Sin valores anuales.</div>';
+  const W = 1000, H = 300, ML = 62, MR = 16, MT = 14, MB = 34;
+  const a0 = puntos[0][0], a1 = puntos[puntos.length - 1][0];
+  const vals = puntos.map((p) => p[1]);
+  let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const margen = (hi - lo) * 0.08; lo -= margen; hi += margen;
+  const x = (a) => ML + ((a - a0) / Math.max(1, a1 - a0)) * (W - ML - MR);
+  const y = (val) => MT + (1 - (val - lo) / (hi - lo)) * (H - MT - MB);
+
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">';
+  svg += '<rect x="' + ML + '" y="' + MT + '" width="' + (W - ML - MR) + '" height="' + (H - MT - MB) +
+         '" fill="#fff" stroke="#e3e0da"/>';
+  for (let k = 0; k <= 4; k++) {
+    const val = lo + (k / 4) * (hi - lo);
+    svg += '<line x1="' + ML + '" y1="' + y(val) + '" x2="' + (W - MR) + '" y2="' + y(val) + '" stroke="#f2efeb"/>' +
+           '<text x="' + (ML - 6) + '" y="' + (y(val) + 3) + '" font-size="10" fill="#6b665e" text-anchor="end">' +
+           num(val, Math.abs(hi) < 10 ? 2 : 0) + "</text>";
+  }
+  const paso = (a1 - a0) > 60 ? 10 : (a1 - a0) > 25 ? 5 : 2;
+  for (let a = Math.ceil(a0 / paso) * paso; a <= a1; a += paso) {
+    svg += '<line x1="' + x(a) + '" y1="' + MT + '" x2="' + x(a) + '" y2="' + (H - MB) + '" stroke="#f2efeb"/>' +
+           '<text x="' + x(a) + '" y="' + (H - MB + 15) + '" font-size="10" fill="#6b665e" text-anchor="middle">' +
+           a + "</text>";
+  }
+
+  const recta = (d, color) => {
+    if (!d || d.aplicable === false || d.pendiente_por_decada == null) return "";
+    const dentro = puntos.filter((p) => p[0] >= d.anio_inicio && p[0] <= d.anio_fin);
+    if (dentro.length < 2) return "";
+    const orden = dentro.map((p) => p[1]).sort((m, n) => m - n);
+    const mediana = orden.length % 2 ? orden[(orden.length - 1) / 2]
+      : (orden[orden.length / 2 - 1] + orden[orden.length / 2]) / 2;
+    const anioMedio = (d.anio_inicio + d.anio_fin) / 2;
+    const b = d.pendiente_por_decada / 10;
+    const yEn = (a) => mediana + b * (a - anioMedio);
+    return '<line x1="' + x(d.anio_inicio) + '" y1="' + y(yEn(d.anio_inicio)) +
+           '" x2="' + x(d.anio_fin) + '" y2="' + y(yEn(d.anio_fin)) +
+           '" stroke="' + color + '" stroke-width="2" opacity="' +
+           (d.significativa ? 1 : 0.45) + '" stroke-dasharray="' +
+           (d.significativa ? "" : "5 4") + '"/>';
+  };
+  svg += recta(c, "#c98a2b") + recta(v, "#1f5f8b");
+
+  let d = "";
+  puntos.forEach((p, i) => { d += (i ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1) + " "; });
+  svg += '<path d="' + d + '" fill="none" stroke="#3c3a36" stroke-width="1.2" opacity="0.75"/>';
+  puntos.forEach((p) => {
+    svg += '<circle cx="' + x(p[0]).toFixed(1) + '" cy="' + y(p[1]).toFixed(1) + '" r="2.6" fill="#3c3a36">' +
+      "<title>" + p[0] + ": " + num(p[1], 2) + "</title></circle>";
+  });
+  return svg + "</svg>";
+}
+
+pintarCatalogo();
+pintarPrincipal();
+
+const FIGURAS = filas(TENDENCIAS.figuras);
+const RUTA_FIG = rutaSalidas("08_figuras/");
+const ROTULO_VENTANA = { ventana_1985_2025: "Ventana " + ROTULO_V,
+                         periodo_completo: "Período completo" };
+
+opciones("ff-variable", unicos(FIGURAS.map((f) => f.variable)), "Todas las variables", etiquetaVar);
+opciones("ff-serie", unicos(FIGURAS.map((f) => f.serie_derivada)), "Todas las series derivadas");
+
+function pintarGaleria() {
+  const v = document.getElementById("ff-variable").value;
+  const sd = document.getElementById("ff-serie").value;
+  const visibles = FIGURAS.filter((f) =>
+    (!v || f.variable === v) && (!sd || f.serie_derivada === sd));
+
+  const grupos = {};
+  visibles.forEach((f) => {
+    const k = f.variable + "|" + f.serie_derivada;
+    (grupos[k] = grupos[k] || {})[f.ventana] = f;
+  });
+  const claves = Object.keys(grupos).sort();
+
+  document.getElementById("ff-conteo").textContent =
+    visibles.length + " figuras en " + claves.length + " series derivadas";
+
+  document.getElementById("galeria").innerHTML = claves.map((k) => {
+    const [variable, serie] = k.split("|");
+    const g = grupos[k];
+    const panel = (nombre) => {
+      const f = g[nombre];
+      if (!f) {
+        return '<div><h3>' + ROTULO_VENTANA[nombre] + "</h3>" +
+          '<div class="vacio">Sin figura.</div></div>';
+      }
+      return "<div><h3>" + ROTULO_VENTANA[nombre] + "</h3>" +
+        '<a href="' + RUTA_FIG + nombre + "/" + f.archivo + '" target="_blank">' +
+        '<img src="' + RUTA_FIG + nombre + "/" + f.archivo +
+        '" alt="' + esc(variable + " " + serie) + '" loading="lazy" ' +
+        'style="width:100%;border:1px solid var(--borde);border-radius:4px"></a>' +
+        '<div class="sub" style="margin-top:4px">' + f.n_estaciones + " estaciones · " +
+        f.n_significativas + " significativas · " + f.n_negativas + " descienden · " +
+        "de " + num(f.minimo_sd_decada, 2) + " a " + num(f.maximo_sd_decada, 2) +
+        " sd/década</div></div>";
+    };
+    return '<div class="tarjeta">' +
+      "<h2>" + esc(etiquetaVar(variable)) + " · " + esc(serie) + "</h2>" +
+      '<div class="dos" style="grid-template-columns:1fr 1fr;margin-top:10px">' +
+        panel("ventana_1985_2025") + panel("periodo_completo") +
+      "</div></div>";
+  }).join("") +
+  arr(TENDENCIAS.figuras_regionales).map((f) =>
+    '<div class="tarjeta"><h2>Señal regional</h2>' +
+    '<div class="sub" style="margin-bottom:8px">' + esc(f.titulo) + "</div>" +
+    '<a href="' + RUTA_FIG + esc(f.archivo) + '" target="_blank">' +
+    '<img src="' + RUTA_FIG + esc(f.archivo) +
+    '" alt="' + esc(f.titulo) + '" loading="lazy" style="width:100%;max-width:900px;' +
+    'border:1px solid var(--borde);border-radius:4px"></a></div>').join("");
+}
+["ff-variable", "ff-serie"].forEach((id) => {
+  document.getElementById(id).onchange = pintarGaleria;
+});
+pintarGaleria();
+
+const MAPAS = filas(TENDENCIAS.mapas || {});
+const RUTA_MAPA = rutaSalidas("09_mapas/");
+
+if (!MAPAS.length) {
+  document.querySelector('nav button[data-panel="mapas"]').style.display = "none";
+} else {
+  opciones("fm-variable", unicos(MAPAS.map((f) => f.variable)), "Todas las variables", etiquetaVar);
+  opciones("fm-serie", unicos(MAPAS.map((f) => f.serie_derivada)), "Todas las series derivadas");
+
+  const pintarMapas = () => {
+    const v = document.getElementById("fm-variable").value;
+    const sd = document.getElementById("fm-serie").value;
+    const visibles = MAPAS.filter((f) =>
+      (!v || f.variable === v) && (!sd || f.serie_derivada === sd));
+    const grupos = {};
+    visibles.forEach((f) => {
+      const k = f.variable + "|" + f.serie_derivada;
+      (grupos[k] = grupos[k] || {})[f.ventana] = f;
+    });
+    const claves = Object.keys(grupos).sort();
+    document.getElementById("fm-conteo").textContent =
+      visibles.length + " mapas en " + claves.length + " series derivadas";
+
+    document.getElementById("galeria-mapas").innerHTML = claves.map((k) => {
+      const [variable, serie] = k.split("|");
+      const g = grupos[k];
+      const panel = (nombre) => {
+        const f = g[nombre];
+        if (!f) {
+          return "<div><h3>" + ROTULO_VENTANA[nombre] + "</h3>" +
+            '<div class="vacio">Sin mapa.</div></div>';
+        }
+        return "<div><h3>" + ROTULO_VENTANA[nombre] + "</h3>" +
+          '<a href="' + RUTA_MAPA + nombre + "/" + f.archivo + '" target="_blank">' +
+          '<img src="' + RUTA_MAPA + nombre + "/" + f.archivo +
+          '" alt="' + esc(variable + " " + serie) + '" loading="lazy" ' +
+          'style="width:100%;border:1px solid var(--borde);border-radius:4px"></a>' +
+          '<div class="sub" style="margin-top:4px">' + f.n_estaciones + " estaciones · " +
+          f.n_significativas + " significativas · " + f.n_descienden + " descienden</div></div>";
+      };
+      return '<div class="tarjeta">' +
+        "<h2>" + esc(etiquetaVar(variable)) + " · " + esc(serie) + "</h2>" +
+        '<div class="dos" style="grid-template-columns:1fr 1fr;margin-top:10px">' +
+          panel("ventana_1985_2025") + panel("periodo_completo") +
+        "</div></div>";
+    }).join("");
+  };
+  ["fm-variable", "fm-serie"].forEach((id) => {
+    document.getElementById(id).onchange = pintarMapas;
+  });
+  pintarMapas();
+}
+
+opciones("fr-ventana", [ROTULO_V, "período completo"], null);
+document.getElementById("fr-ventana").querySelector("option").remove();
+function refrescarResumen() {
+  const cual = document.getElementById("fr-ventana").value;
+  const d = filas(cual === ROTULO_V ? TENDENCIAS.resumen_ventana : TENDENCIAS.resumen_completo);
+  pintarTabla("t-resumen", d, [
+    { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
+    { t: "Serie derivada", k: "serie_derivada" },
+    { t: "Primaria", f: (f) => (f.es_indice_primario ? "sí" : "") },
+    { t: "Series", num: true, k: "n_series" },
+    { t: "Aplicables", num: true, k: "n_aplicables" },
+    { t: "Ascienden", num: true, k: "n_positivas" },
+    { t: "Descienden", num: true, k: "n_negativas" },
+    { t: "Significativas", num: true, k: "n_significativas" },
+    { t: "Cambian con la banda alterna", num: true, k: "n_cambia_con_banda_alterna" },
+    { t: "Cambian sin relleno crítico", num: true, k: "n_cambia_sin_relleno_critico" },
+    { t: "Mediana sd/década", num: true, f: (f) => num(f.mediana_pendiente_sd_decada, 3) },
+    { t: "Mediana ρ₁", num: true, f: (f) => num(f.mediana_rho_1, 3) },
+  ]);
+}
+document.getElementById("fr-ventana").onchange = refrescarResumen;
+refrescarResumen();
+
+pintarTabla("t-regional", REGIONAL, [
+  { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
+  { t: "Serie derivada", k: "serie_derivada" },
+  { t: "Sitios", num: true, k: "m" },
+  { t: "Años", num: true, k: "n" },
+  { t: "Período", f: (f) => f.anio_inicio + "–" + f.anio_fin },
+  { t: "Z", num: true, f: (f) => num(f.z, 3) },
+  { t: "p", num: true, f: (f) => num(f.p, 4) },
+  { t: "Veredicto", f: (f) => '<span class="pill ' +
+      (f.rechaza ? (f.z > 0 ? "sube" : "baja") : "no") + '">' +
+      (f.rechaza ? (f.z > 0 ? "asciende" : "desciende") : "sin señal") + "</span>" },
+  { t: "η serial", num: true, f: (f) => num(f.eta_serial_medio, 3) },
+  { t: "η cruzada", num: true, f: (f) => num(f.eta_cruzada, 3) },
+  { t: "Sin corregir", num: true, f: (f) => "p = " + num(f.p_ninguna, 4) },
+]);
+
+const EXCL = filas(TENDENCIAS.exclusiones_ventana).map((e) => Object.assign({ ventana: ROTULO_V }, e))
+  .concat(filas(TENDENCIAS.exclusiones_completo).map((e) => Object.assign({ ventana: "período completo" }, e)));
+pintarTabla("t-exclusiones", EXCL, [
+  { t: "Ventana", k: "ventana" },
+  { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
+  { t: "Serie derivada", k: "serie_derivada" },
+  { t: "Estación", k: "estacion" },
+  { t: "Motivo", k: "motivo" },
+]);
+
+}
+</script>
+</body>
+</html>

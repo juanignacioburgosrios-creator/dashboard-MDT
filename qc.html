@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Control de calidad</title>
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+
+<header>
+  <h1>Control de calidad</h1>
+  <div class="kpis" id="kpis"></div>
+</header>
+
+<nav>
+  <button data-panel="serie" class="activa">Series</button>
+  <button data-panel="duplicados">Duplicados</button>
+  <button data-panel="vecinas">Vecinas asignadas</button>
+  <button data-panel="noeval">Sin veredicto</button>
+</nav>
+
+<main>
+  <section id="panel-serie">
+    <div class="columnas">
+      <aside>
+        <div class="cabecera">
+          <div class="titulo">Variable</div>
+          <select id="f-variable"></select>
+        </div>
+        <div class="catalogo" id="catalogo"></div>
+      </aside>
+      <div class="contenido" id="principal"></div>
+    </div>
+  </section>
+
+  <section id="panel-duplicados" class="oculta">
+    <div class="tabla-caja"><table id="t-duplicados"></table></div>
+  </section>
+  <section id="panel-vecinas" class="oculta">
+    <div class="filtros">
+      <div class="campo"><label>Variable</label><select id="fv-variable"></select></div>
+      <div class="campo"><label>Objetivo</label><select id="fv-objetivo"></select></div>
+    </div>
+    <div class="tabla-caja"><table id="t-vecinas"></table></div>
+  </section>
+  <section id="panel-noeval" class="oculta">
+    <div class="tabla-caja"><table id="t-noeval"></table></div>
+  </section>
+</main>
+
+<script>var QC_CTX = {};</script>
+<script src="comun.js"></script>
+<script>
+"use strict";
+cargarDatos(["qc_indice.js", "qc_marcas.js"], iniciar);
+
+function iniciar() {
+
+const DETALLE = filas(QC_MARCAS.detalle);
+const SERIES = arr(QC_INDICE.series);
+const VECINAS = filas(QC_INDICE.vecinas);
+const UMBRALES = QC_INDICE.umbrales || {};
+
+const NOMBRE = {};
+SERIES.forEach((s) => { NOMBRE[s.Codigo] = s.Nombre; });
+DETALLE.forEach((d) => { if (d.Nombre_vecina) NOMBRE[d.Vecina] = d.Nombre_vecina; });
+
+const ETIQUETA = {};
+arr(QC_INDICE.variables).forEach((v) => { ETIQUETA[v.codigo] = v.etiqueta; });
+const etiquetaVar = (v) => ETIQUETA[v] || v;
+
+const DETALLE_POR_MARCA = {};
+DETALLE.forEach((d) => {
+  const k = d.clave + "|" + d.Fecha;
+  (DETALLE_POR_MARCA[k] = DETALLE_POR_MARCA[k] || []).push(d);
+});
+
+const T = QC_INDICE.totales;
+pintarKpis("kpis", [
+  [T.n_series, "series"],
+  [miles(T.n_observados), "días observados"],
+  [miles(T.n_evaluados), "días con veredicto"],
+  [miles(T.n_sospechosos), "sospechosos"],
+  [miles(T.n_outliers), "outliers"],
+]);
+pestanias();
+
+const pillEstado = (e) => '<span class="pill ' + e + '">' + e + "</span>";
+
+opciones("f-variable", unicos(SERIES.map((s) => s.Variable)), "Todas las variables", etiquetaVar);
+
+let serieSel = null;
+
+function pintarCatalogo() {
+  const v = document.getElementById("f-variable").value;
+  const visibles = SERIES.filter((s) => !v || s.Variable === v);
+  let html = "", variableAnterior = null;
+  visibles.forEach((s) => {
+    if (!v && s.Variable !== variableAnterior) {
+      html += '<div class="grupo">' + esc(etiquetaVar(s.Variable)) + "</div>";
+      variableAnterior = s.Variable;
+    }
+    const clave = s.Variable + "|" + s.Codigo;
+    const cuenta = (s.N_sospechosos > 0 || s.N_outliers > 0)
+      ? (s.N_sospechosos > 0 ? '<b class="s" title="' + s.N_sospechosos + ' sospechoso(s)">' + s.N_sospechosos + "</b>" : "") +
+        (s.N_outliers > 0 ? '<b class="o" title="' + s.N_outliers + ' outlier(s)">' + s.N_outliers + "</b>" : "")
+      : (s.Test === "sin test" ? '<b class="n" title="la variable no tiene test de outliers asignado">sin test</b>' : "");
+    html += '<div class="item' + (serieSel === clave ? " sel" : "") + '" data-clave="' + esc(clave) + '" ' +
+            'title="' + esc(s.Codigo + " · " + (s.Nombre || "")) + '">' +
+              '<span class="cod">' + esc(s.Codigo) + "</span>" +
+              '<span class="nom">' + esc(s.Nombre || "") + "</span>" +
+              '<span class="cuenta">' + cuenta + "</span></div>";
+  });
+  document.getElementById("catalogo").innerHTML = html || '<div class="vacio">Sin series</div>';
+  document.querySelectorAll("#catalogo .item").forEach((el) => {
+    el.onclick = () => { seleccionar(el.dataset.clave); };
+  });
+}
+
+document.getElementById("f-variable").onchange = () => {
+  const v = document.getElementById("f-variable").value;
+  if (serieSel && v && serieSel.indexOf(v + "|") !== 0) { serieSel = null; pintarPrincipal(null); }
+  pintarCatalogo();
+};
+
+const conSerie = cargador(QC_CTX, "qc_ctx_");
+
+function seleccionar(clave) {
+  serieSel = clave;
+  pintarCatalogo();
+  document.getElementById("principal").innerHTML =
+    '<div class="tarjeta"><div class="vacio">Cargando la serie diaria…</div></div>';
+  conSerie(clave, (ctx) => {
+    if (serieSel !== clave) return;
+    pintarPrincipal(ctx);
+  });
+}
+
+let vista = { i0: 0, i1: 0 };
+let ctxActual = null;
+let marcaAbierta = null;
+let radioContexto = 12;
+
+function pintarPrincipal(ctx) {
+  const caja = document.getElementById("principal");
+  ctxActual = ctx;
+  marcaAbierta = null;
+  if (!ctx) {
+    caja.innerHTML = '<div class="tarjeta"><div class="vacio">' +
+      (serieSel ? "No se encontró la serie." : "Elija una estación.") + "</div></div>";
+    return;
+  }
+
+  const s = SERIES.find((x) => x.Variable + "|" + x.Codigo === serieSel) || {};
+  vista = { i0: 0, i1: ctx.n - 1 };
+
+  caja.innerHTML =
+    '<div class="tarjeta">' +
+      "<h2>" + esc(ctx.codigo) + " · " + esc(ctx.nombre || "") + "</h2>" +
+      '<div class="sub">' + esc(etiquetaVar(ctx.variable)) +
+        " · " + miles(s.N_observados) + " días observados</div>" +
+      '<div class="barra" style="margin-top:10px">' +
+        '<div class="herramientas">' +
+          '<button class="b" id="z-todo">Ver todo</button>' +
+          '<button class="b" id="z-menos">−</button>' +
+          '<button class="b" id="z-mas">+</button>' +
+          '<span class="sub" id="z-info"></span>' +
+        "</div>" +
+        '<div class="leyenda">' +
+          '<span><span class="punto s"></span>sospechoso</span>' +
+          '<span><span class="punto o"></span>outlier</span>' +
+        "</div>" +
+      "</div>" +
+      '<div id="g-serie"></div>' +
+    "</div>" +
+    '<div id="detalle"></div>';
+
+  document.getElementById("z-todo").onclick = () => { vista = { i0: 0, i1: ctx.n - 1 }; dibujarSerie(); };
+  document.getElementById("z-mas").onclick = () => { zoom(0.6, 0.5); };
+  document.getElementById("z-menos").onclick = () => { zoom(1 / 0.6, 0.5); };
+  dibujarSerie();
+}
+
+function zoom(factor, anclaRel) {
+  const n = ctxActual.n;
+  const largo = vista.i1 - vista.i0;
+  const ancla = vista.i0 + anclaRel * largo;
+  let nuevo = Math.max(10, Math.min(n - 1, largo * factor));
+  let i0 = Math.round(ancla - anclaRel * nuevo);
+  let i1 = Math.round(i0 + nuevo);
+  if (i0 < 0) { i1 -= i0; i0 = 0; }
+  if (i1 > n - 1) { i0 -= i1 - (n - 1); i1 = n - 1; }
+  vista = { i0: Math.max(0, i0), i1: Math.min(n - 1, i1) };
+  dibujarSerie();
+}
+
+const GEO = { W: 1000, H: 300, ML: 62, MR: 16, MT: 14, MB: 34 };
+
+function dibujarSerie() {
+  const ctx = ctxActual;
+  const { W, H, ML, MR, MT, MB } = GEO;
+  const { i0, i1 } = vista;
+  const ancho = W - ML - MR;
+  const [lo, hi] = rangoDe(ctx.objetivo, i0, i1);
+  const x = (i) => ML + ((i - i0) * ancho) / Math.max(1, i1 - i0);
+  const y = (v) => MT + (1 - (v - lo) / (hi - lo || 1)) * (H - MT - MB);
+
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg" class="arrastrable" id="svg-serie">';
+  svg += '<rect x="' + ML + '" y="' + MT + '" width="' + ancho + '" height="' + (H - MT - MB) +
+         '" fill="#fff" stroke="#e3e0da"/>';
+  svg += ejeFechas(ctx.inicio, i0, i1, x, GEO);
+  svg += ejeY(lo, hi, y, GEO, Math.abs(hi) < 10 ? 2 : 0);
+  svg += '<text x="10" y="' + (MT + 10) + '" font-size="10" fill="#6b665e">' + esc(ctx.unidad || "") + "</text>";
+
+  const puntos = i1 - i0 + 1;
+  if (puntos > ancho * 1.5) {
+    const cols = Math.floor(ancho);
+    let d = "";
+    for (let c = 0; c < cols; c++) {
+      const a = i0 + Math.floor((c * puntos) / cols);
+      const b = i0 + Math.floor(((c + 1) * puntos) / cols) - 1;
+      let mn = Infinity, mx = -Infinity;
+      for (let i = a; i <= b && i <= i1; i++) {
+        const v = ctx.objetivo[i];
+        if (v == null || !isFinite(v)) continue;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      if (!isFinite(mn)) continue;
+      const px = (ML + c + 0.5).toFixed(1);
+      d += "M" + px + " " + y(mn).toFixed(1) + "L" + px + " " + y(mx).toFixed(1) + " ";
+    }
+    svg += '<path d="' + d + '" stroke="' + "var(--serie)" + '" stroke-width="1" fill="none" opacity="0.85"/>';
+  } else {
+    svg += trazo(ctx.objetivo, i0, i1, x, y, "var(--serie)", 1.4);
+  }
+
+  const m = ctx.marcas;
+  if (m) {
+    const idx = arr(m.i);
+    let circulos = "";
+    for (let k = 0; k < idx.length; k++) {
+      const i = idx[k];
+      if (i < i0 || i > i1) continue;
+      const v = m.valor[k];
+      if (v == null || !isFinite(v)) continue;
+      const out = m.estado[k] === "outlier";
+      circulos += '<circle class="marca" data-k="' + k + '" cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) +
+        '" r="' + (out ? 4 : 3.4) + '" fill="' + (out ? "var(--outlier)" : "var(--sospechoso)") +
+        '" stroke="' + (out ? "var(--outlier-borde)" : "var(--sospechoso-borde)") + '" stroke-width="0.9"' +
+        (marcaAbierta === k ? ' stroke-width="2" stroke="#1f5f8b"' : "") +
+        "><title>" + esc(m.fecha[k] + " · " + m.estado[k] + " · " + num(v) + " " + (ctx.unidad || "")) +
+        "</title></circle>";
+    }
+    svg += circulos;
+  }
+  svg += "</svg>";
+
+  document.getElementById("g-serie").innerHTML = svg;
+  document.getElementById("z-info").textContent =
+    iso(fechaDesde(ctx.inicio, i0)) + " → " + iso(fechaDesde(ctx.inicio, i1)) + "  (" + miles(i1 - i0 + 1) + " días)";
+  conectarNavegacion(document.getElementById("svg-serie"));
+}
+
+function conectarNavegacion(svg) {
+  const rel = (ev) => {
+    const c = svg.getBoundingClientRect();
+    return ((ev.clientX - c.left) / c.width * GEO.W - GEO.ML) / (GEO.W - GEO.ML - GEO.MR);
+  };
+  svg.onwheel = (ev) => {
+    ev.preventDefault();
+    zoom(ev.deltaY > 0 ? 1.25 : 0.8, Math.max(0, Math.min(1, rel(ev))));
+  };
+  svg.ondblclick = () => { vista = { i0: 0, i1: ctxActual.n - 1 }; dibujarSerie(); };
+  let arrastrando = false, xInicio = 0, vistaInicio = null;
+  svg.onmousedown = (ev) => {
+    arrastrando = true; xInicio = ev.clientX; vistaInicio = Object.assign({}, vista);
+    svg.classList.add("arrastrando");
+  };
+  window.addEventListener("mouseup", () => { arrastrando = false; svg.classList.remove("arrastrando"); });
+  svg.onmousemove = (ev) => {
+    if (!arrastrando) return;
+    const c = svg.getBoundingClientRect();
+    const largo = vistaInicio.i1 - vistaInicio.i0;
+    const dias = Math.round(((xInicio - ev.clientX) / c.width) * (GEO.W / (GEO.W - GEO.ML - GEO.MR)) * largo);
+    let i0 = vistaInicio.i0 + dias, i1 = vistaInicio.i1 + dias;
+    if (i0 < 0) { i1 -= i0; i0 = 0; }
+    if (i1 > ctxActual.n - 1) { i0 -= i1 - (ctxActual.n - 1); i1 = ctxActual.n - 1; }
+    vista = { i0: Math.max(0, i0), i1: i1 };
+    dibujarSerie();
+  };
+  svg.querySelectorAll("circle.marca").forEach((c) => {
+    c.style.cursor = "pointer";
+    c.onmousedown = (ev) => ev.stopPropagation();
+    c.onclick = (ev) => { ev.stopPropagation(); abrirMarca(Number(c.dataset.k)); };
+  });
+}
+
+function abrirMarca(k) {
+  const ctx = ctxActual, m = ctx.marcas;
+  marcaAbierta = k;
+  const fecha = m.fecha[k];
+  const vecinas = DETALLE_POR_MARCA[ctx.variable + "|" + ctx.codigo + "|" + fecha] || [];
+  const u = UMBRALES[ctx.test] || {};
+
+  document.getElementById("detalle").innerHTML =
+    '<div class="tarjeta">' +
+      "<h2>" + esc(fecha) + " · " + pillEstado(m.estado[k]) + "</h2>" +
+      '<div class="sub">valor <strong>' + num(m.valor[k]) + " " + esc(ctx.unidad || "") + "</strong>" +
+        " · estadístico de la objetivo " + num(m.estadistico[k], 3) +
+        " · " + esc(m.motivo[k] || "") + "</div>" +
+      '<div class="dos" style="margin-top:12px">' +
+        "<div>" +
+          '<div class="barra"><h3>Vecinas en el tiempo</h3>' +
+            '<span class="sub" id="ctx-info"></span></div>' +
+          '<div id="g-contexto"></div>' +
+        "</div>" +
+        "<div>" +
+          "<h3>" + esc(u.etiqueta || "Estadístico de las vecinas") + " ese día</h3>" +
+          '<div id="g-vecinas"></div>' +
+        "</div>" +
+      "</div>" +
+      '<div class="tabla-caja" style="margin-top:14px"><table id="t-vecinas-marca"></table></div>' +
+    "</div>";
+
+  dibujarContexto();
+  dibujarEstadisticoVecinas(vecinas, u);
+  pintarTabla("t-vecinas-marca", vecinas, [
+    { t: "Orden", num: true, k: "Orden" },
+    { t: "Vecina", f: (f) => esc(f.Vecina) + " · " + esc(f.Nombre_vecina || "") },
+    { t: "ρ", num: true, f: (f) => num(f.Correlacion, 3) },
+    { t: "Distancia", num: true, f: (f) => num(f.Distancia_km, 1) + " km" },
+    { t: "Dato ese día", f: (f) => '<span class="pill ' + (f.Con_dato ? "si" : "no") + '">' + (f.Con_dato ? "sí" : "no") + "</span>" },
+    { t: u.etiqueta || "Estadístico", num: true, f: (f) => num(f.Estadistico_vecina, 3) },
+    { t: "Corrobora", f: (f) => '<span class="pill ' + (f.Corrobora ? "si" : "no") + '">' + (f.Corrobora ? "sí" : "no") + "</span>" },
+    { t: "Consultada", f: (f) => (f.Consultada ? "sí" : "no") },
+  ]);
+  dibujarSerie();
+  document.getElementById("detalle").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function dibujarContexto() {
+  const ctx = ctxActual, m = ctx.marcas, k = marcaAbierta;
+  const centro = m.i[k];
+  const geo = { W: 620, H: 260, ML: 52, MR: 12, MT: 12, MB: 30 };
+  const { W, H, ML, MR, MT, MB } = geo;
+  const i0 = Math.max(0, centro - radioContexto);
+  const i1 = Math.min(ctx.n - 1, centro + radioContexto);
+  const ancho = W - ML - MR;
+  const x = (i) => ML + ((i - i0) * ancho) / Math.max(1, i1 - i0);
+
+  const todas = [ctx.objetivo].concat(arr(ctx.vecinas).map((v) => v.valores));
+  let lo = Infinity, hi = -Infinity;
+  todas.forEach((s) => { const [a, b] = rangoDe(s, i0, i1); if (a < lo) lo = a; if (b > hi) hi = b; });
+  const y = (v) => MT + (1 - (v - lo) / (hi - lo || 1)) * (H - MT - MB);
+
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg" id="svg-contexto">';
+  svg += '<rect x="' + ML + '" y="' + MT + '" width="' + ancho + '" height="' + (H - MT - MB) +
+         '" fill="#fff" stroke="#e3e0da"/>';
+  svg += ejeFechas(ctx.inicio, i0, i1, x, geo);
+  svg += ejeY(lo, hi, y, geo, Math.abs(hi) < 10 ? 2 : 0);
+  svg += '<line x1="' + x(centro) + '" y1="' + MT + '" x2="' + x(centro) + '" y2="' + (H - MB) +
+         '" stroke="var(--outlier-borde)" stroke-width="1.1" stroke-dasharray="4 3"/>';
+
+  arr(ctx.vecinas).forEach((v, j) => {
+    svg += trazo(v.valores, i0, i1, x, y, COLORES[j % COLORES.length], 1.2, 0.9);
+  });
+  svg += trazo(ctx.objetivo, i0, i1, x, y, "var(--serie)", 2.2);
+
+  const vc = ctx.objetivo[centro];
+  if (vc != null && isFinite(vc)) {
+    svg += '<circle cx="' + x(centro) + '" cy="' + y(vc) + '" r="5" fill="' +
+      (m.estado[k] === "outlier" ? "var(--outlier)" : "var(--sospechoso)") +
+      '" stroke="var(--outlier-borde)" stroke-width="1.2"/>';
+  }
+  svg += "</svg>";
+  document.getElementById("g-contexto").innerHTML = svg;
+  document.getElementById("ctx-info").textContent = (i1 - i0 + 1) + " días";
+
+  const s = document.getElementById("svg-contexto");
+  s.onwheel = (ev) => {
+    ev.preventDefault();
+    radioContexto = Math.max(3, Math.min(400, Math.round(radioContexto * (ev.deltaY > 0 ? 1.3 : 0.77))));
+    dibujarContexto();
+  };
+}
+
+const COLORES = ["#c1666b", "#4d8b7b", "#8a6bb1", "#c98a2b", "#4f7fa8", "#7a8b3e", "#a4628f"];
+
+function dibujarEstadisticoVecinas(vecinas, u) {
+  if (!vecinas.length) {
+    document.getElementById("g-vecinas").innerHTML =
+      '<div class="vacio">Esta serie no tiene vecinas asignadas.</div>';
+    return;
+  }
+  const W = 460, ML = 96, MR = 54, MT = 26, alto = 30;
+  const H = MT + vecinas.length * alto + 26;
+  const lineas = arr(u.lineas);
+  const valores = vecinas.map((v) => v.Estadistico_vecina).filter((v) => v != null && isFinite(v));
+  const topes = valores.concat(lineas.map((l) => l.valor));
+  let lo = Math.min(0, Math.min.apply(null, topes));
+  let hi = Math.max.apply(null, topes);
+  if (hi === lo) hi = lo + 1;
+  const margen = (hi - lo) * 0.12;
+  hi += margen;
+  const x = (v) => ML + ((v - lo) / (hi - lo)) * (W - ML - MR);
+
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">';
+  svg += '<line x1="' + x(Math.max(lo, 0)) + '" y1="' + (MT - 6) + '" x2="' + x(Math.max(lo, 0)) +
+         '" y2="' + (H - 22) + '" stroke="#d9d5ce"/>';
+
+  lineas.forEach((l) => {
+    svg += '<line x1="' + x(l.valor) + '" y1="' + (MT - 12) + '" x2="' + x(l.valor) + '" y2="' + (H - 22) +
+           '" stroke="#8d2418" stroke-width="1" stroke-dasharray="3 3"/>' +
+           '<text x="' + x(l.valor) + '" y="' + (H - 8) + '" font-size="9.5" fill="#8d2418" text-anchor="middle">' +
+           esc(String(l.valor)) + "</text>";
+  });
+  svg += '<text x="' + ML + '" y="' + (MT - 14) + '" font-size="10" fill="#6b665e">' +
+         esc(u.etiqueta || "") + "</text>";
+
+  vecinas.forEach((v, j) => {
+    const yb = MT + j * alto;
+    const etiqueta = v.Vecina + (v.Orden ? " (" + v.Orden + "ª)" : "");
+    svg += '<text x="' + (ML - 8) + '" y="' + (yb + 14) + '" font-size="10.5" fill="#22201d" text-anchor="end">' +
+           esc(etiqueta) + "</text>";
+    if (v.Estadistico_vecina == null || !isFinite(v.Estadistico_vecina)) {
+      svg += '<text x="' + (ML + 6) + '" y="' + (yb + 14) + '" font-size="10.5" fill="#6b665e">sin dato ese día</text>';
+      return;
+    }
+    const x0 = x(Math.max(lo, 0)), x1 = x(v.Estadistico_vecina);
+    svg += '<rect x="' + Math.min(x0, x1) + '" y="' + (yb + 3) + '" width="' + Math.abs(x1 - x0) +
+           '" height="16" rx="2" fill="' + (v.Corrobora ? "#8fbfa8" : "#d8d3cb") +
+           '" stroke="' + (v.Corrobora ? "#2e7d5b" : "#bdb7ad") + '"/>';
+    svg += '<text x="' + (Math.max(x0, x1) + 5) + '" y="' + (yb + 15) + '" font-size="10.5" fill="#22201d">' +
+           num(v.Estadistico_vecina, 3) + (v.Corrobora ? " ✓" : "") + "</text>";
+  });
+  svg += "</svg>";
+  document.getElementById("g-vecinas").innerHTML = svg;
+}
+
+pintarCatalogo();
+pintarPrincipal(null);
+
+pintarTabla("t-duplicados", arr(QC_INDICE.duplicados), [
+  { t: "Conservada", f: (f) => esc(f.Conservada) + " · " + esc(f.Nombre_conservada || "") },
+  { t: "Descartada", f: (f) => esc(f.Descartada) + " · " + esc(f.Nombre_descartada || "") },
+  { t: "Variables", k: "Variables_compartidas" },
+  { t: "Distancia", num: true, f: (f) => num(f.Distancia_km, 3) + " km" },
+  { t: "Coincidencia mín.", num: true, f: (f) => num(f.Frac_identicos_min, 4) },
+  { t: "Días que aporta", num: true, k: "Dias_que_aporta_la_descartada" },
+  { t: "Acción", k: "Accion" },
+  { t: "Motivo", k: "Motivo" },
+]);
+
+opciones("fv-variable", unicos(VECINAS.map((v) => v.Variable)), "Todas", etiquetaVar);
+function refrescarPanelVecinas() {
+  const e = document.getElementById("fv-objetivo");
+  const v = document.getElementById("fv-variable").value;
+  const previo = e.value;
+  const cods = unicos(VECINAS.filter((x) => !v || x.Variable === v).map((x) => x.Objetivo));
+  e.innerHTML = '<option value="">todos</option>' + cods.map((c) =>
+    '<option value="' + esc(c) + '">' + esc(c) + " · " + esc(NOMBRE[c] || "") + "</option>").join("");
+  if (cods.indexOf(previo) >= 0) e.value = previo;
+  const o = e.value;
+  pintarTabla("t-vecinas", VECINAS.filter((x) => (!v || x.Variable === v) && (!o || x.Objetivo === o)), [
+    { t: "Variable", f: (f) => esc(etiquetaVar(f.Variable)) },
+    { t: "Objetivo", f: (f) => esc(f.Objetivo) + " · " + esc(NOMBRE[f.Objetivo] || "") },
+    { t: "Orden", num: true, k: "Orden" },
+    { t: "Vecina", f: (f) => esc(f.Vecina) + " · " + esc(NOMBRE[f.Vecina] || "") },
+    { t: "ρ", num: true, f: (f) => num(f.Correlacion, 4) },
+    { t: "Solapamiento", num: true, f: (f) => miles(f.N_solapamiento) },
+    { t: "Distancia", num: true, f: (f) => num(f.Distancia_km, 1) + " km" },
+    { t: "Admitida", f: (f) => (f.Vecina_en_seleccion ? "sí" : "no") },
+  ]);
+}
+document.getElementById("fv-variable").onchange = refrescarPanelVecinas;
+document.getElementById("fv-objetivo").onchange = refrescarPanelVecinas;
+refrescarPanelVecinas();
+
+pintarTabla("t-noeval", arr(QC_INDICE.no_evaluados), [
+  { t: "Variable", f: (f) => esc(etiquetaVar(f.Variable)) },
+  { t: "Días", num: true, f: (f) => miles(f.N_dias) },
+  { t: "Motivo", k: "Motivo" },
+]);
+
+}
+</script>
+</body>
+</html>

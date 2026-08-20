@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Relleno de faltantes</title>
+<link rel="stylesheet" href="estilo.css">
+<style>
+  .estimado { color: #b3402f; }
+  .barra-flujo { display: flex; height: 22px; border-radius: 3px; overflow: hidden;
+                 border: 1px solid var(--borde); margin: 10px 0 4px; }
+  .barra-flujo div { height: 100%; }
+  .flujo-leyenda { display: flex; gap: 16px; font-size: 11.5px; color: var(--suave); }
+  .cuadro { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Relleno de faltantes</h1>
+  <div class="kpis" id="kpis"></div>
+</header>
+
+<nav>
+  <button data-panel="serie" class="activa">Series</button>
+  <button data-panel="donantes">Donantes evaluados</button>
+  <button data-panel="rachas">Rachas excluidas</button>
+</nav>
+
+<main>
+  <section id="panel-serie">
+    <div class="columnas">
+      <aside>
+        <div class="cabecera">
+          <div class="titulo">Variable</div>
+          <select id="f-variable"></select>
+        </div>
+        <div class="catalogo" id="catalogo"></div>
+      </aside>
+      <div class="contenido" id="principal"></div>
+    </div>
+  </section>
+
+  <section id="panel-donantes" class="oculta">
+    <div class="filtros">
+      <div class="campo"><label>Variable</label><select id="fd-variable"></select></div>
+      <div class="campo"><label>Estación</label><select id="fd-estacion"></select></div>
+      <div class="campo"><label>Admisión</label><select id="fd-admitida"></select></div>
+    </div>
+    <div class="tabla-caja"><table id="t-donantes"></table></div>
+  </section>
+  <section id="panel-rachas" class="oculta">
+    <div class="tabla-caja"><table id="t-rachas"></table></div>
+  </section>
+</main>
+
+<script>var RELLENO_CTX = {};</script>
+<script src="comun.js"></script>
+<script>
+"use strict";
+cargarDatos(["relleno_indice.js"], iniciar);
+
+function iniciar() {
+
+const SERIES = filas(RELLENO_INDICE.series);
+const DONANTES = filas(RELLENO_INDICE.donantes);
+const COMPUERTA = filas(RELLENO_INDICE.compuerta);
+const RACHAS = filas(RELLENO_INDICE.rachas);
+
+const ETIQUETA = {};
+arr(RELLENO_INDICE.variables).forEach((v) => { ETIQUETA[v.codigo] = v.etiqueta; });
+const etiquetaVar = (v) => ETIQUETA[v] || v;
+const NOMBRE = {};
+SERIES.forEach((s) => { NOMBRE[s.estacion] = s.nombre; });
+DONANTES.forEach((d) => { if (d.nombre_donante) NOMBRE[d.donante] = d.nombre_donante; });
+
+const T = RELLENO_INDICE.totales;
+pintarKpis("kpis", [
+  [T.n_series, "series"],
+  [miles(T.n_observados), "días observados"],
+  [miles(T.n_faltantes), "días faltantes"],
+  [miles(T.n_estimados), "días estimados"],
+  [miles(T.n_sin_estimar), "elegibles sin estimar"],
+  [miles(T.n_rachas_excluidas), "rachas excluidas"],
+]);
+pestanias();
+
+opciones("f-variable", unicos(SERIES.map((s) => s.variable)), "Todas las variables", etiquetaVar);
+
+let sel = null;
+const cargar = cargador(RELLENO_CTX, "relleno_ctx_");
+
+function pintarCatalogo() {
+  const v = document.getElementById("f-variable").value;
+  const visibles = SERIES.filter((s) => !v || s.variable === v);
+  let html = "", anterior = null;
+  visibles.forEach((s) => {
+    if (!v && s.variable !== anterior) {
+      html += '<div class="grupo">' + esc(etiquetaVar(s.variable)) + "</div>";
+      anterior = s.variable;
+    }
+    const cuenta = s.dias_estimados > 0
+      ? '<b class="v" title="' + s.dias_estimados + ' día(s) estimado(s)">' + s.dias_estimados + "</b>"
+      : "";
+    html += '<div class="item' + (sel === s.clave ? " sel" : "") + '" data-clave="' + esc(s.clave) + '">' +
+      '<span class="cod">' + esc(s.estacion) + "</span>" +
+      '<span class="nom">' + esc(s.nombre || "") + "</span>" +
+      '<span class="cuenta">' + cuenta + "</span></div>";
+  });
+  document.getElementById("catalogo").innerHTML = html || '<div class="vacio">Sin series</div>';
+  document.querySelectorAll("#catalogo .item").forEach((el) => {
+    el.onclick = () => { seleccionar(el.dataset.clave); };
+  });
+}
+document.getElementById("f-variable").onchange = pintarCatalogo;
+
+function seleccionar(clave) {
+  sel = clave;
+  pintarCatalogo();
+  document.getElementById("principal").innerHTML =
+    '<div class="tarjeta"><div class="vacio">Cargando la serie…</div></div>';
+  cargar(clave, (ctx) => { if (sel === clave) pintarPrincipal(ctx); });
+}
+
+let vista = { i0: 0, i1: 0 };
+let ctxActual = null;
+let verDonantes = true;
+const GEO = { W: 1000, H: 300, ML: 62, MR: 16, MT: 14, MB: 34 };
+
+function pintarPrincipal(ctx) {
+  ctxActual = ctx;
+  const caja = document.getElementById("principal");
+  if (!ctx) {
+    caja.innerHTML = '<div class="tarjeta"><div class="vacio">' +
+      (sel ? "No se encontró la serie." : "Elija una estación.") + "</div></div>";
+    return;
+  }
+  const s = SERIES.find((x) => x.clave === sel);
+  vista = { i0: 0, i1: ctx.n - 1 };
+
+  const total = s.n_observados + s.n_faltantes;
+  const pct = (x) => (100 * x / total).toFixed(2) + "%";
+  const sinEstimar = s.n_faltantes - s.dias_estimados;
+  const suyos = DONANTES.filter((d) => d.clave === sel && d.admitida);
+  const hayDonantes = suyos.length > 0;
+
+  caja.innerHTML =
+    '<div class="tarjeta">' +
+      "<h2>" + esc(ctx.codigo) + " · " + esc(ctx.nombre || "") + "</h2>" +
+      '<div class="sub">' + esc(etiquetaVar(ctx.variable)) + " · método " +
+        esc(ctx.metodo || "—") +
+        (s.compuerta == null ? "" : " · compuerta " + esc(s.compuerta)) + "</div>" +
+      '<div class="barra-flujo">' +
+        '<div style="width:' + pct(s.n_observados) + ';background:#3c3a36" title="observados"></div>' +
+        '<div style="width:' + pct(s.dias_estimados) + ';background:#c98a2b" title="estimados"></div>' +
+        '<div style="width:' + pct(sinEstimar) + ';background:#e6e2db" title="siguen faltando"></div>' +
+      "</div>" +
+      '<div class="flujo-leyenda">' +
+        '<span><span class="cuadro" style="background:#3c3a36"></span>' + miles(s.n_observados) + " observados</span>" +
+        '<span><span class="cuadro" style="background:#c98a2b"></span>' + miles(s.dias_estimados) + " estimados</span>" +
+        '<span><span class="cuadro" style="background:#e6e2db"></span>' + miles(sinEstimar) + " siguen faltando</span>" +
+        "<span>" + miles(s.n_rachas_excluidas) + " rachas excluidas</span>" +
+      "</div>" +
+      '<div class="barra" style="margin-top:12px">' +
+        '<div class="herramientas">' +
+          '<button class="b" id="z-todo">Ver todo</button>' +
+          '<button class="b" id="z-menos">−</button>' +
+          '<button class="b" id="z-mas">+</button>' +
+          (hayDonantes
+            ? '<button class="b' + (verDonantes ? " activo" : "") + '" id="b-donantes">Donantes</button>'
+            : "") +
+          '<span class="sub" id="z-info"></span>' +
+        "</div>" +
+        '<div class="leyenda">' +
+          '<span><span class="cuadro" style="background:#3c3a36"></span>observado</span>' +
+          '<span><span class="cuadro" style="background:#c98a2b"></span>estimado</span>' +
+        "</div>" +
+      "</div>" +
+      '<div id="g-serie"></div>' +
+    "</div>" +
+    (hayDonantes
+      ? '<div class="tarjeta"><h3>Donantes admitidos</h3>' +
+        '<div class="tabla-caja"><table id="t-donantes-serie"></table></div></div>'
+      : "");
+
+  document.getElementById("z-todo").onclick = () => { vista = { i0: 0, i1: ctx.n - 1 }; dibujar(); };
+  document.getElementById("z-mas").onclick = () => zoom(0.6, 0.5);
+  document.getElementById("z-menos").onclick = () => zoom(1 / 0.6, 0.5);
+  if (hayDonantes) {
+    document.getElementById("b-donantes").onclick = (ev) => {
+      verDonantes = !verDonantes;
+      ev.target.classList.toggle("activo", verDonantes);
+      dibujar();
+    };
+  }
+  dibujar();
+
+  if (hayDonantes) {
+    pintarTabla("t-donantes-serie", suyos.slice().sort((a, b) => b.rho - a.rho), [
+      { t: "Donante", f: (f) => esc(f.donante) + " · " + esc(f.nombre_donante || "") },
+      { t: "ρ", num: true, f: (f) => num(f.rho, 4) },
+      { t: "Solapamiento", num: true, f: (f) => miles(f.n_solapamiento) },
+      { t: "p", num: true, f: (f) => num(f.p, 4) },
+      { t: "Se dibuja", f: (f) => (arr(ctx.donantes).some((d) => d.codigo === f.donante) ? "sí" : "—") },
+    ]);
+  }
+}
+
+function zoom(factor, anclaRel) {
+  const n = ctxActual.n, largo = vista.i1 - vista.i0;
+  const ancla = vista.i0 + anclaRel * largo;
+  const nuevo = Math.max(10, Math.min(n - 1, largo * factor));
+  let i0 = Math.round(ancla - anclaRel * nuevo), i1 = Math.round(i0 + nuevo);
+  if (i0 < 0) { i1 -= i0; i0 = 0; }
+  if (i1 > n - 1) { i0 -= i1 - (n - 1); i1 = n - 1; }
+  vista = { i0: Math.max(0, i0), i1: Math.min(n - 1, i1) };
+  dibujar();
+}
+
+const COLORES = ["#4d8b7b", "#8a6bb1", "#4f7fa8", "#7a8b3e", "#a4628f"];
+
+function dibujar() {
+  const ctx = ctxActual;
+  const { W, H, ML, MR, MT, MB } = GEO;
+  const { i0, i1 } = vista;
+  const ancho = W - ML - MR;
+  const donantes = verDonantes ? arr(ctx.donantes) : [];
+  let [lo, hi] = rangoDe(ctx.valores, i0, i1);
+  donantes.forEach((d) => {
+    const [a, b] = rangoDe(d.valores, i0, i1);
+    if (a < lo) lo = a;
+    if (b > hi) hi = b;
+  });
+  const x = (i) => ML + ((i - i0) * ancho) / Math.max(1, i1 - i0);
+  const y = (v) => MT + (1 - (v - lo) / (hi - lo || 1)) * (H - MT - MB);
+
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg" class="arrastrable" id="svg-serie">';
+  svg += '<rect x="' + ML + '" y="' + MT + '" width="' + ancho + '" height="' + (H - MT - MB) +
+         '" fill="#fff" stroke="#e3e0da"/>';
+  svg += ejeFechas(ctx.inicio, i0, i1, x, GEO);
+  svg += ejeY(lo, hi, y, GEO, Math.abs(hi) < 10 ? 2 : 0);
+  svg += '<text x="10" y="' + (MT + 10) + '" font-size="10" fill="#6b665e">' + esc(ctx.unidad || "") + "</text>";
+
+  donantes.forEach((d, j) => {
+    svg += trazo(d.valores, i0, i1, x, y, COLORES[j % COLORES.length], 1, 0.55);
+  });
+
+  svg += trazo(ctx.valores, i0, i1, x, y, "#3c3a36", 1.3);
+  const puntos = i1 - i0 + 1;
+  let marcasEst = "";
+  if (puntos <= 4000) {
+    for (let i = i0; i <= i1; i++) {
+      if (!ctx.estimado[i]) continue;
+      const v = ctx.valores[i];
+      if (v == null || !isFinite(v)) continue;
+      marcasEst += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) +
+        '" r="' + (puntos < 400 ? 2.6 : 1.6) + '" fill="#c98a2b"/>';
+    }
+  } else {
+    const cols = Math.floor(ancho);
+    for (let c = 0; c < cols; c++) {
+      const a = i0 + Math.floor((c * puntos) / cols);
+      const b = i0 + Math.floor(((c + 1) * puntos) / cols) - 1;
+      let hay = false;
+      for (let i = a; i <= b && i <= i1; i++) if (ctx.estimado[i]) { hay = true; break; }
+      if (hay) {
+        marcasEst += '<rect x="' + (ML + c) + '" y="' + (H - MB - 6) + '" width="1.4" height="6" fill="#c98a2b"/>';
+      }
+    }
+  }
+  svg += marcasEst + "</svg>";
+
+  document.getElementById("g-serie").innerHTML = svg;
+  document.getElementById("z-info").textContent =
+    iso(fechaDesde(ctx.inicio, i0)) + " → " + iso(fechaDesde(ctx.inicio, i1)) +
+    "  (" + miles(i1 - i0 + 1) + " días)";
+  navegar(document.getElementById("svg-serie"));
+}
+
+function navegar(svg) {
+  const rel = (ev) => {
+    const c = svg.getBoundingClientRect();
+    return ((ev.clientX - c.left) / c.width * GEO.W - GEO.ML) / (GEO.W - GEO.ML - GEO.MR);
+  };
+  svg.onwheel = (ev) => { ev.preventDefault(); zoom(ev.deltaY > 0 ? 1.25 : 0.8, Math.max(0, Math.min(1, rel(ev)))); };
+  svg.ondblclick = () => { vista = { i0: 0, i1: ctxActual.n - 1 }; dibujar(); };
+  let arrastrando = false, xIni = 0, vIni = null;
+  svg.onmousedown = (ev) => { arrastrando = true; xIni = ev.clientX; vIni = Object.assign({}, vista); svg.classList.add("arrastrando"); };
+  window.addEventListener("mouseup", () => { arrastrando = false; svg.classList.remove("arrastrando"); });
+  svg.onmousemove = (ev) => {
+    if (!arrastrando) return;
+    const c = svg.getBoundingClientRect();
+    const largo = vIni.i1 - vIni.i0;
+    const dias = Math.round(((xIni - ev.clientX) / c.width) * (GEO.W / (GEO.W - GEO.ML - GEO.MR)) * largo);
+    let i0 = vIni.i0 + dias, i1 = vIni.i1 + dias;
+    if (i0 < 0) { i1 -= i0; i0 = 0; }
+    if (i1 > ctxActual.n - 1) { i0 -= i1 - (ctxActual.n - 1); i1 = ctxActual.n - 1; }
+    vista = { i0: Math.max(0, i0), i1: i1 };
+    dibujar();
+  };
+}
+
+pintarCatalogo();
+pintarPrincipal(null);
+
+opciones("fd-variable", unicos(DONANTES.map((d) => d.variable)), "Todas", etiquetaVar);
+opciones("fd-admitida", ["admitidos", "excluidos"], "Todos");
+function refrescarDonantes() {
+  const v = document.getElementById("fd-variable").value;
+  const e = document.getElementById("fd-estacion");
+  const previo = e.value;
+  const cods = unicos(DONANTES.filter((d) => !v || d.variable === v).map((d) => d.estacion));
+  e.innerHTML = '<option value="">Todas</option>' + cods.map((c) =>
+    '<option value="' + esc(c) + '">' + esc(c) + " · " + esc(NOMBRE[c] || "") + "</option>").join("");
+  if (cods.indexOf(previo) >= 0) e.value = previo;
+  const est = e.value, adm = document.getElementById("fd-admitida").value;
+  pintarTabla("t-donantes", DONANTES.filter((d) =>
+    (!v || d.variable === v) && (!est || d.estacion === est) &&
+    (!adm || (adm === "admitidos" ? d.admitida : !d.admitida))), [
+    { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
+    { t: "Estación", f: (f) => esc(f.estacion) + " · " + esc(NOMBRE[f.estacion] || "") },
+    { t: "Donante", f: (f) => esc(f.donante) + " · " + esc(f.nombre_donante || "") },
+    { t: "ρ", num: true, f: (f) => num(f.rho, 4) },
+    { t: "Solapamiento", num: true, f: (f) => miles(f.n_solapamiento) },
+    { t: "Admitida", f: (f) => '<span class="pill ' + (f.admitida ? "si" : "no") + '">' + (f.admitida ? "sí" : "no") + "</span>" },
+    { t: "Motivo de exclusión", k: "motivo_exclusion" },
+  ]);
+}
+["fd-variable", "fd-estacion", "fd-admitida"].forEach((id) => {
+  document.getElementById(id).onchange = refrescarDonantes;
+});
+refrescarDonantes();
+
+pintarTabla("t-rachas", RACHAS, [
+  { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
+  { t: "Estación", f: (f) => esc(f.estacion) + " · " + esc(NOMBRE[f.estacion] || "") },
+  { t: "Desde", k: "inicio" },
+  { t: "Hasta", k: "fin" },
+  { t: "Días", num: true, k: "largo" },
+  { t: "Motivo", k: "motivo" },
+]);
+
+}
+</script>
+</body>
+</html>

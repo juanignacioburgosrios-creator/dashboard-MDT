@@ -1,0 +1,3 @@
+// Generado por analisis/scripts/. NO editar a mano.
+// Fuente: salidas del pipeline. El dashboard solo lee esto.
+RELLENO_CTX["nivel_lacustre|10520003"] = {"variable":"nivel_lacustre","codigo":"10520003","nombre":"LAGO TAGUA TAGUA (LM)","metodo":"spline","unidad":"m","inicio":"2024-01-01","n":31,"valores":[3,2.97,2.94,2.91,3.04,3.27,3.21,3.14,2.96,2.8,2.71,2.66,2.59,2.59,2.6,2.57,2.52,2.53,2.45,2.39,2.36,2.36,2.45,2.44,2.42,2.5,2.55,2.5,2.39,2.31,2.27],"estimado":[false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false],"donantes":[]};

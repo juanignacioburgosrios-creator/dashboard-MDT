@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Admisión de series</title>
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+
+<header>
+  <h1>Admisión de series</h1>
+  <div class="kpis" id="kpis"></div>
+</header>
+
+<nav>
+  <button data-panel="catalogo" class="activa">Catálogo</button>
+  <button data-panel="resumen">Resumen por variable</button>
+  <button data-panel="estaciones">Estaciones admitidas</button>
+</nav>
+
+<main>
+  <section id="panel-catalogo">
+    <div class="columnas">
+      <aside>
+        <div class="cabecera">
+          <div class="titulo">Variable</div>
+          <select id="f-variable"></select>
+          <div style="margin-top:8px"><select id="f-estado"></select></div>
+        </div>
+        <div class="catalogo" id="catalogo"></div>
+      </aside>
+      <div class="contenido" id="principal"></div>
+    </div>
+  </section>
+
+  <section id="panel-resumen" class="oculta">
+    <div class="tabla-caja"><table id="t-resumen"></table></div>
+  </section>
+  <section id="panel-estaciones" class="oculta">
+    <div class="tabla-caja"><table id="t-estaciones"></table></div>
+  </section>
+</main>
+
+<script src="comun.js"></script>
+<script>
+"use strict";
+cargarDatos(["admision.js"], iniciar);
+
+function iniciar() {
+
+const SERIES = filas(ADMISION.series);
+const COBERTURA = filas(ADMISION.cobertura);
+const P = ADMISION.periodo;
+
+const ETIQUETA = {};
+arr(ADMISION.variables).forEach((v) => { ETIQUETA[v.codigo] = v.etiqueta; });
+const etiquetaVar = (v) => ETIQUETA[v] || v;
+
+const COB = {};
+COBERTURA.forEach((c) => {
+  const k = c.variable + "|" + c.codigo;
+  (COB[k] = COB[k] || []).push(c);
+});
+
+const T = ADMISION.totales;
+pintarKpis("kpis", [
+  [T.n_catalogo, "series del catálogo"],
+  [T.n_admitidas, "admitidas"],
+  [T.n_estaciones, "estaciones"],
+  [P.inicio + "–" + P.fin, "período del filtro"],
+  [Math.round(P.completitud * 100) + " %", "días por año"],
+  [Math.ceil(P.fraccion * (P.fin - P.inicio + 1)), "años exigidos"],
+]);
+pestanias();
+
+opciones("f-variable", unicos(SERIES.map((s) => s.variable)), "Todas las variables", etiquetaVar);
+opciones("f-estado", ["admitidas", "no admitidas"], "Todas");
+
+let sel = null;
+
+function pintarCatalogo() {
+  const v = document.getElementById("f-variable").value;
+  const e = document.getElementById("f-estado").value;
+  const visibles = SERIES.filter((s) =>
+    (!v || s.variable === v) &&
+    (!e || (e === "admitidas" ? s.admitida : !s.admitida)));
+  let html = "", anterior = null;
+  visibles.forEach((s) => {
+    if (!v && s.variable !== anterior) {
+      html += '<div class="grupo">' + esc(etiquetaVar(s.variable)) + "</div>";
+      anterior = s.variable;
+    }
+    const clave = s.variable + "|" + s.codigo;
+    const cuenta = '<b class="' + (s.admitida ? "v" : "n") + '" title="' +
+      s.anios_validos + " de " + (P.fin - P.inicio + 1) + ' años con datos suficientes">' +
+      s.anios_validos + "</b>";
+    html += '<div class="item' + (sel === clave ? " sel" : "") + '" data-clave="' + esc(clave) + '">' +
+      '<span class="cod">' + esc(s.codigo) + "</span>" +
+      '<span class="nom">' + esc(s.nombre || "") + "</span>" +
+      '<span class="cuenta">' + cuenta + "</span></div>";
+  });
+  document.getElementById("catalogo").innerHTML = html || '<div class="vacio">Sin series</div>';
+  document.querySelectorAll("#catalogo .item").forEach((el) => {
+    el.onclick = () => { sel = el.dataset.clave; pintarCatalogo(); pintarPrincipal(); };
+  });
+}
+
+document.getElementById("f-variable").onchange = () => { pintarCatalogo(); };
+document.getElementById("f-estado").onchange = () => { pintarCatalogo(); };
+
+function pintarPrincipal() {
+  const caja = document.getElementById("principal");
+  if (!sel) {
+    caja.innerHTML = '<div class="tarjeta"><div class="vacio">Elija una serie.</div></div>';
+    return;
+  }
+  const s = SERIES.find((x) => x.variable + "|" + x.codigo === sel);
+  const cob = (COB[sel] || []).slice().sort((a, b) => a.anio - b.anio);
+  const requeridos = Math.ceil(P.fraccion * (P.fin - P.inicio + 1));
+
+  caja.innerHTML =
+    '<div class="tarjeta">' +
+      "<h2>" + esc(s.codigo) + " · " + esc(s.nombre || "") + "</h2>" +
+      '<div class="sub">' + esc(etiquetaVar(s.variable)) + " · " +
+        miles(s.n_datos) + " días con dato · registro de " + esc(s.fecha_inicio) +
+        " a " + esc(s.fecha_termino) + "</div>" +
+      '<div class="barra" style="margin-top:12px">' +
+        "<div>" +
+          '<span class="pill ' + (s.admitida ? "si" : "no") + '">' +
+            (s.admitida ? "admitida" : "no admitida") + "</span> " +
+          '<span class="sub">' + s.anios_validos + " años válidos" +
+            (s.exenta ? " · exenta" : " de " + requeridos + " exigidos") +
+            " · racha máxima " + s.racha_maxima + " años</span>" +
+        "</div>" +
+        '<div class="leyenda">' +
+          '<span><span class="punto" style="background:#4f7fa8"></span>año válido</span>' +
+          '<span><span class="punto" style="background:#d8d3cb"></span>bajo el umbral</span>' +
+        "</div>" +
+      "</div>" +
+      '<div id="g-cobertura"></div>' +
+    "</div>";
+
+  document.getElementById("g-cobertura").innerHTML = svgCobertura(cob);
+}
+
+function svgCobertura(cob) {
+  if (!cob.length) return '<div class="vacio">Sin datos de cobertura.</div>';
+  const W = 1000, H = 210, ML = 40, MR = 12, MT = 14, MB = 30;
+  const a0 = Math.min(cob[0].anio, P.inicio), a1 = Math.max(cob[cob.length - 1].anio, P.fin);
+  const n = a1 - a0 + 1;
+  const ancho = (W - ML - MR) / n;
+  const y = (u) => MT + (1 - u) * (H - MT - MB);
+
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">';
+  const xp0 = ML + (P.inicio - a0) * ancho, xp1 = ML + (P.fin - a0 + 1) * ancho;
+  svg += '<rect x="' + xp0 + '" y="' + MT + '" width="' + (xp1 - xp0) + '" height="' + (H - MT - MB) +
+         '" fill="#f0f5f8"/>';
+  svg += '<rect x="' + ML + '" y="' + MT + '" width="' + (W - ML - MR) + '" height="' + (H - MT - MB) +
+         '" fill="none" stroke="#e3e0da"/>';
+  svg += '<line x1="' + ML + '" y1="' + y(P.completitud) + '" x2="' + (W - MR) + '" y2="' + y(P.completitud) +
+         '" stroke="#b3402f" stroke-width="1" stroke-dasharray="3 3"/>' +
+         '<text x="' + (ML - 5) + '" y="' + (y(P.completitud) + 3) +
+         '" font-size="10" fill="#b3402f" text-anchor="end">' + Math.round(P.completitud * 100) + "%</text>";
+  for (const k of [0, 0.5, 1]) {
+    svg += '<text x="' + (ML - 5) + '" y="' + (y(k) + 3) +
+           '" font-size="10" fill="#6b665e" text-anchor="end">' + (k * 100) + "</text>";
+  }
+  cob.forEach((c) => {
+    const x = ML + (c.anio - a0) * ancho;
+    const dentro = c.anio >= P.inicio && c.anio <= P.fin;
+    svg += '<rect x="' + (x + 0.4) + '" y="' + y(c.completitud) + '" width="' + Math.max(1, ancho - 0.8) +
+      '" height="' + (y(0) - y(c.completitud)) + '" fill="' +
+      (c.anio_valido && dentro ? "#4f7fa8" : c.anio_valido ? "#9db8cc" : "#d8d3cb") + '">' +
+      "<title>" + c.anio + ": " + Math.round(c.completitud * 100) + " % (" + c.dias_observados + " días)</title></rect>";
+  });
+  const paso = n > 60 ? 10 : n > 25 ? 5 : 2;
+  for (let a = Math.ceil(a0 / paso) * paso; a <= a1; a += paso) {
+    svg += '<text x="' + (ML + (a - a0 + 0.5) * ancho) + '" y="' + (H - MB + 15) +
+           '" font-size="10" fill="#6b665e" text-anchor="middle">' + a + "</text>";
+  }
+  return svg + "</svg>";
+}
+
+pintarCatalogo();
+pintarPrincipal();
+
+pintarTabla("t-resumen", arr(ADMISION.resumen), [
+  { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
+  { t: "Criterio", k: "criterio" },
+  { t: "Catálogo", num: true, k: "n_catalogo" },
+  { t: "Admitidas", num: true, k: "n_admitidas" },
+  { t: "% retenido", num: true, f: (f) => num(f.pct_retenido, 1) },
+]);
+
+pintarTabla("t-estaciones", filas(ADMISION.estaciones), [
+  { t: "Código", k: "codigo" },
+  { t: "Estación", k: "nombre" },
+  { t: "Latitud", num: true, f: (f) => num(f.latitud, 4) },
+  { t: "Longitud", num: true, f: (f) => num(f.longitud, 4) },
+  { t: "Altitud", num: true, f: (f) => num(f.altitud_msnm, 0) },
+  { t: "Variables", num: true, k: "n_variables" },
+  { t: "Cuáles", f: (f) => esc(String(f.variables).split("; ").map(etiquetaVar).join(", ")) },
+]);
+
+}
+</script>
+</body>
+</html>
