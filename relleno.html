@@ -240,6 +240,11 @@ function dibujar() {
   });
 
   svg += trazo(ctx.valores, i0, i1, x, y, "#3c3a36", 1.3);
+  const soloEst = [];
+  for (let i = Math.max(0, i0 - 1); i <= Math.min(ctx.n - 1, i1 + 1); i++) {
+    if (ctx.estimado[i] || ctx.estimado[i - 1] || ctx.estimado[i + 1]) soloEst[i] = ctx.valores[i];
+  }
+  svg += trazo(soloEst, i0, i1, x, y, "#c98a2b", 1.3);
   const puntos = i1 - i0 + 1;
   let marcasEst = "";
   if (puntos <= 4000) {
