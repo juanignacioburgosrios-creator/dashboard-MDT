@@ -128,9 +128,8 @@ function pintarPrincipal() {
         "<div>" +
           '<span class="pill ' + (s.admitida ? "si" : "no") + '">' +
             (s.admitida ? "admitida" : "no admitida") + "</span> " +
-          '<span class="sub">' + s.anios_validos + " años válidos" +
-            (s.exenta ? " · exenta" : " de " + requeridos + " exigidos") +
-            " · racha máxima " + s.racha_maxima + " años</span>" +
+          '<span class="sub">' + (s.exenta ? s.anios_validos + " años · exenta"
+            : s.anios_validos + "/" + requeridos + " años") + "</span>" +
         "</div>" +
         '<div class="leyenda">' +
           '<span><span class="punto" style="background:#4f7fa8"></span>año válido</span>' +
