@@ -14,9 +14,8 @@
 
 <nav>
   <button data-panel="serie" class="activa">Series</button>
-  <button data-panel="duplicados">Duplicados</button>
-  <button data-panel="vecinas">Vecinas asignadas</button>
-  <button data-panel="noeval">Sin veredicto</button>
+  <button data-panel="vecinas">Vecinas</button>
+  <button data-panel="noeval">No evaluados</button>
 </nav>
 
 <main>
@@ -33,9 +32,6 @@
     </div>
   </section>
 
-  <section id="panel-duplicados" class="oculta">
-    <div class="tabla-caja"><table id="t-duplicados"></table></div>
-  </section>
   <section id="panel-vecinas" class="oculta">
     <div class="filtros">
       <div class="campo"><label>Variable</label><select id="fv-variable"></select></div>
@@ -79,7 +75,7 @@ const T = QC_INDICE.totales;
 pintarKpis("kpis", [
   [T.n_series, "series"],
   [miles(T.n_observados), "días observados"],
-  [miles(T.n_evaluados), "días con veredicto"],
+  [miles(T.n_evaluados), "días evaluados"],
   [miles(T.n_sospechosos), "sospechosos"],
   [miles(T.n_outliers), "outliers"],
 ]);
@@ -306,9 +302,6 @@ function abrirMarca(k) {
   document.getElementById("detalle").innerHTML =
     '<div class="tarjeta">' +
       "<h2>" + esc(fecha) + " · " + pillEstado(m.estado[k]) + "</h2>" +
-      '<div class="sub">valor <strong>' + num(m.valor[k]) + " " + esc(ctx.unidad || "") + "</strong>" +
-        " · estadístico de la objetivo " + num(m.estadistico[k], 3) +
-        " · " + esc(m.motivo[k] || "") + "</div>" +
       '<div class="dos" style="margin-top:12px">' +
         "<div>" +
           '<div class="barra"><h3>Vecinas en el tiempo</h3>' +
@@ -440,17 +433,6 @@ function dibujarEstadisticoVecinas(vecinas, u) {
 
 pintarCatalogo();
 pintarPrincipal(null);
-
-pintarTabla("t-duplicados", arr(QC_INDICE.duplicados), [
-  { t: "Conservada", f: (f) => esc(f.Conservada) + " · " + esc(f.Nombre_conservada || "") },
-  { t: "Descartada", f: (f) => esc(f.Descartada) + " · " + esc(f.Nombre_descartada || "") },
-  { t: "Variables", k: "Variables_compartidas" },
-  { t: "Distancia", num: true, f: (f) => num(f.Distancia_km, 3) + " km" },
-  { t: "Coincidencia mín.", num: true, f: (f) => num(f.Frac_identicos_min, 4) },
-  { t: "Días que aporta", num: true, k: "Dias_que_aporta_la_descartada" },
-  { t: "Acción", k: "Accion" },
-  { t: "Motivo", k: "Motivo" },
-]);
 
 opciones("fv-variable", unicos(VECINAS.map((v) => v.Variable)), "Todas", etiquetaVar);
 function refrescarPanelVecinas() {
