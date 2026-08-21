@@ -23,12 +23,9 @@
 </header>
 
 <nav>
-  <button data-panel="series" class="activa">Por estación</button>
-  <button data-panel="figuras">Figuras</button>
-  <button data-panel="mapas">Mapas</button>
-  <button data-panel="resumen">Resumen por serie</button>
+  <button data-panel="series" class="activa">Series</button>
+  <button data-panel="resumen">Resumen por variable</button>
   <button data-panel="regional">Señal regional</button>
-  <button data-panel="exclusiones">Exclusiones</button>
 </nav>
 
 <main>
@@ -47,35 +44,15 @@
     </div>
   </section>
 
-  <section id="panel-figuras" class="oculta">
+  <section id="panel-resumen" class="oculta">
     <div class="filtros">
       <div class="campo"><label>Variable</label><select id="ff-variable"></select></div>
       <div class="campo"><label>Serie derivada</label><select id="ff-serie"></select></div>
-      <div class="campo"><label>&nbsp;</label><span class="sub" id="ff-conteo"></span></div>
     </div>
     <div id="galeria"></div>
   </section>
-
-  <section id="panel-mapas" class="oculta">
-    <div class="filtros">
-      <div class="campo"><label>Variable</label><select id="fm-variable"></select></div>
-      <div class="campo"><label>Serie derivada</label><select id="fm-serie"></select></div>
-      <div class="campo"><label>&nbsp;</label><span class="sub" id="fm-conteo"></span></div>
-    </div>
-    <div id="galeria-mapas"></div>
-  </section>
-
-  <section id="panel-resumen" class="oculta">
-    <div class="filtros">
-      <div class="campo"><label>Ventana</label><select id="fr-ventana"></select></div>
-    </div>
-    <div class="tabla-caja"><table id="t-resumen"></table></div>
-  </section>
   <section id="panel-regional" class="oculta">
-    <div class="tabla-caja"><table id="t-regional"></table></div>
-  </section>
-  <section id="panel-exclusiones" class="oculta">
-    <div class="tabla-caja"><table id="t-exclusiones"></table></div>
+    <div id="g-regional"></div>
   </section>
 </main>
 
@@ -88,7 +65,6 @@ function iniciar() {
 
 const VENTANA = filas(TENDENCIAS.ventana);
 const COMPLETO = filas(TENDENCIAS.completo);
-const REGIONAL = filas(TENDENCIAS.regional);
 const ALFA = TENDENCIAS.significancia;
 const PER = TENDENCIAS.ventana_periodo;
 const ROTULO_V = PER.inicio + "–" + PER.fin;
@@ -300,7 +276,9 @@ pintarCatalogo();
 pintarPrincipal();
 
 const FIGURAS = filas(TENDENCIAS.figuras);
-const RUTA_FIG = rutaSalidas("08_figuras/");
+const MAPAS = filas(TENDENCIAS.mapas || {});
+const RUTA_FIG = "figuras/";
+const RUTA_MAPA = "mapas/";
 const ROTULO_VENTANA = { ventana_1985_2025: "Ventana " + ROTULO_V,
                          periodo_completo: "Período completo" };
 
@@ -310,158 +288,61 @@ opciones("ff-serie", unicos(FIGURAS.map((f) => f.serie_derivada)), "Todas las se
 function pintarGaleria() {
   const v = document.getElementById("ff-variable").value;
   const sd = document.getElementById("ff-serie").value;
-  const visibles = FIGURAS.filter((f) =>
-    (!v || f.variable === v) && (!sd || f.serie_derivada === sd));
+  const pasa = (f) => (!v || f.variable === v) && (!sd || f.serie_derivada === sd);
 
   const grupos = {};
-  visibles.forEach((f) => {
+  FIGURAS.filter(pasa).forEach((f) => {
     const k = f.variable + "|" + f.serie_derivada;
-    (grupos[k] = grupos[k] || {})[f.ventana] = f;
+    ((grupos[k] = grupos[k] || { fig: {}, mapa: {} }).fig)[f.ventana] = f;
+  });
+  MAPAS.filter(pasa).forEach((f) => {
+    const k = f.variable + "|" + f.serie_derivada;
+    ((grupos[k] = grupos[k] || { fig: {}, mapa: {} }).mapa)[f.ventana] = f;
   });
   const claves = Object.keys(grupos).sort();
 
-  document.getElementById("ff-conteo").textContent =
-    visibles.length + " figuras en " + claves.length + " series derivadas";
+  const panel = (f, ruta, ventana, rotulo, alt) => {
+    if (!f) {
+      return "<div><h3>" + rotulo + " · " + ROTULO_VENTANA[ventana] + "</h3>" +
+        '<div class="vacio">Sin figura.</div></div>';
+    }
+    const src = ruta + ventana + "/" + f.archivo;
+    return "<div><h3>" + rotulo + " · " + ROTULO_VENTANA[ventana] + "</h3>" +
+      '<a href="' + src + '" target="_blank">' +
+      '<img src="' + src + '" alt="' + esc(alt) + '" loading="lazy" ' +
+      'style="width:100%;border:1px solid var(--borde);border-radius:4px"></a>' +
+      '<div class="sub" style="margin-top:4px">' + f.n_estaciones + " estaciones · " +
+      f.n_significativas + " significativas</div></div>";
+  };
 
   document.getElementById("galeria").innerHTML = claves.map((k) => {
     const [variable, serie] = k.split("|");
     const g = grupos[k];
-    const panel = (nombre) => {
-      const f = g[nombre];
-      if (!f) {
-        return '<div><h3>' + ROTULO_VENTANA[nombre] + "</h3>" +
-          '<div class="vacio">Sin figura.</div></div>';
-      }
-      return "<div><h3>" + ROTULO_VENTANA[nombre] + "</h3>" +
-        '<a href="' + RUTA_FIG + nombre + "/" + f.archivo + '" target="_blank">' +
-        '<img src="' + RUTA_FIG + nombre + "/" + f.archivo +
-        '" alt="' + esc(variable + " " + serie) + '" loading="lazy" ' +
-        'style="width:100%;border:1px solid var(--borde);border-radius:4px"></a>' +
-        '<div class="sub" style="margin-top:4px">' + f.n_estaciones + " estaciones · " +
-        f.n_significativas + " significativas · " + f.n_negativas + " descienden · " +
-        "de " + num(f.minimo_sd_decada, 2) + " a " + num(f.maximo_sd_decada, 2) +
-        " sd/década</div></div>";
-    };
+    const alt = etiquetaVar(variable) + " " + serie;
     return '<div class="tarjeta">' +
       "<h2>" + esc(etiquetaVar(variable)) + " · " + esc(serie) + "</h2>" +
       '<div class="dos" style="grid-template-columns:1fr 1fr;margin-top:10px">' +
-        panel("ventana_1985_2025") + panel("periodo_completo") +
+        panel(g.fig.ventana_1985_2025, RUTA_FIG, "ventana_1985_2025", "Boxplot", alt) +
+        panel(g.fig.periodo_completo, RUTA_FIG, "periodo_completo", "Boxplot", alt) +
+        panel(g.mapa.ventana_1985_2025, RUTA_MAPA, "ventana_1985_2025", "Mapa", alt) +
+        panel(g.mapa.periodo_completo, RUTA_MAPA, "periodo_completo", "Mapa", alt) +
       "</div></div>";
-  }).join("") +
-  arr(TENDENCIAS.figuras_regionales).map((f) =>
-    '<div class="tarjeta"><h2>Señal regional</h2>' +
-    '<div class="sub" style="margin-bottom:8px">' + esc(f.titulo) + "</div>" +
-    '<a href="' + RUTA_FIG + esc(f.archivo) + '" target="_blank">' +
-    '<img src="' + RUTA_FIG + esc(f.archivo) +
-    '" alt="' + esc(f.titulo) + '" loading="lazy" style="width:100%;max-width:900px;' +
-    'border:1px solid var(--borde);border-radius:4px"></a></div>').join("");
+  }).join("") || '<div class="tarjeta"><div class="vacio">Sin figuras.</div></div>';
 }
 ["ff-variable", "ff-serie"].forEach((id) => {
   document.getElementById(id).onchange = pintarGaleria;
 });
 pintarGaleria();
 
-const MAPAS = filas(TENDENCIAS.mapas || {});
-const RUTA_MAPA = rutaSalidas("09_mapas/");
-
-if (!MAPAS.length) {
-  document.querySelector('nav button[data-panel="mapas"]').style.display = "none";
-} else {
-  opciones("fm-variable", unicos(MAPAS.map((f) => f.variable)), "Todas las variables", etiquetaVar);
-  opciones("fm-serie", unicos(MAPAS.map((f) => f.serie_derivada)), "Todas las series derivadas");
-
-  const pintarMapas = () => {
-    const v = document.getElementById("fm-variable").value;
-    const sd = document.getElementById("fm-serie").value;
-    const visibles = MAPAS.filter((f) =>
-      (!v || f.variable === v) && (!sd || f.serie_derivada === sd));
-    const grupos = {};
-    visibles.forEach((f) => {
-      const k = f.variable + "|" + f.serie_derivada;
-      (grupos[k] = grupos[k] || {})[f.ventana] = f;
-    });
-    const claves = Object.keys(grupos).sort();
-    document.getElementById("fm-conteo").textContent =
-      visibles.length + " mapas en " + claves.length + " series derivadas";
-
-    document.getElementById("galeria-mapas").innerHTML = claves.map((k) => {
-      const [variable, serie] = k.split("|");
-      const g = grupos[k];
-      const panel = (nombre) => {
-        const f = g[nombre];
-        if (!f) {
-          return "<div><h3>" + ROTULO_VENTANA[nombre] + "</h3>" +
-            '<div class="vacio">Sin mapa.</div></div>';
-        }
-        return "<div><h3>" + ROTULO_VENTANA[nombre] + "</h3>" +
-          '<a href="' + RUTA_MAPA + nombre + "/" + f.archivo + '" target="_blank">' +
-          '<img src="' + RUTA_MAPA + nombre + "/" + f.archivo +
-          '" alt="' + esc(variable + " " + serie) + '" loading="lazy" ' +
-          'style="width:100%;border:1px solid var(--borde);border-radius:4px"></a>' +
-          '<div class="sub" style="margin-top:4px">' + f.n_estaciones + " estaciones · " +
-          f.n_significativas + " significativas · " + f.n_descienden + " descienden</div></div>";
-      };
-      return '<div class="tarjeta">' +
-        "<h2>" + esc(etiquetaVar(variable)) + " · " + esc(serie) + "</h2>" +
-        '<div class="dos" style="grid-template-columns:1fr 1fr;margin-top:10px">' +
-          panel("ventana_1985_2025") + panel("periodo_completo") +
-        "</div></div>";
-    }).join("");
-  };
-  ["fm-variable", "fm-serie"].forEach((id) => {
-    document.getElementById(id).onchange = pintarMapas;
-  });
-  pintarMapas();
-}
-
-opciones("fr-ventana", [ROTULO_V, "período completo"], null);
-document.getElementById("fr-ventana").querySelector("option").remove();
-function refrescarResumen() {
-  const cual = document.getElementById("fr-ventana").value;
-  const d = filas(cual === ROTULO_V ? TENDENCIAS.resumen_ventana : TENDENCIAS.resumen_completo);
-  pintarTabla("t-resumen", d, [
-    { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
-    { t: "Serie derivada", k: "serie_derivada" },
-    { t: "Primaria", f: (f) => (f.es_indice_primario ? "sí" : "") },
-    { t: "Series", num: true, k: "n_series" },
-    { t: "Aplicables", num: true, k: "n_aplicables" },
-    { t: "Ascienden", num: true, k: "n_positivas" },
-    { t: "Descienden", num: true, k: "n_negativas" },
-    { t: "Significativas", num: true, k: "n_significativas" },
-    { t: "Cambian con la banda alterna", num: true, k: "n_cambia_con_banda_alterna" },
-    { t: "Cambian sin relleno crítico", num: true, k: "n_cambia_sin_relleno_critico" },
-    { t: "Mediana sd/década", num: true, f: (f) => num(f.mediana_pendiente_sd_decada, 3) },
-    { t: "Mediana ρ₁", num: true, f: (f) => num(f.mediana_rho_1, 3) },
-  ]);
-}
-document.getElementById("fr-ventana").onchange = refrescarResumen;
-refrescarResumen();
-
-pintarTabla("t-regional", REGIONAL, [
-  { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
-  { t: "Serie derivada", k: "serie_derivada" },
-  { t: "Sitios", num: true, k: "m" },
-  { t: "Años", num: true, k: "n" },
-  { t: "Período", f: (f) => f.anio_inicio + "–" + f.anio_fin },
-  { t: "Z", num: true, f: (f) => num(f.z, 3) },
-  { t: "p", num: true, f: (f) => num(f.p, 4) },
-  { t: "Veredicto", f: (f) => '<span class="pill ' +
-      (f.rechaza ? (f.z > 0 ? "sube" : "baja") : "no") + '">' +
-      (f.rechaza ? (f.z > 0 ? "asciende" : "desciende") : "sin señal") + "</span>" },
-  { t: "η serial", num: true, f: (f) => num(f.eta_serial_medio, 3) },
-  { t: "η cruzada", num: true, f: (f) => num(f.eta_cruzada, 3) },
-  { t: "Sin corregir", num: true, f: (f) => "p = " + num(f.p_ninguna, 4) },
-]);
-
-const EXCL = filas(TENDENCIAS.exclusiones_ventana).map((e) => Object.assign({ ventana: ROTULO_V }, e))
-  .concat(filas(TENDENCIAS.exclusiones_completo).map((e) => Object.assign({ ventana: "período completo" }, e)));
-pintarTabla("t-exclusiones", EXCL, [
-  { t: "Ventana", k: "ventana" },
-  { t: "Variable", f: (f) => esc(etiquetaVar(f.variable)) },
-  { t: "Serie derivada", k: "serie_derivada" },
-  { t: "Estación", k: "estacion" },
-  { t: "Motivo", k: "motivo" },
-]);
+const FIG_REGIONAL = arr(TENDENCIAS.figuras_regionales)
+  .find((f) => f.archivo === "regional_ventanas.png");
+document.getElementById("g-regional").innerHTML = FIG_REGIONAL
+  ? '<div class="tarjeta">' +
+    '<a href="' + RUTA_FIG + esc(FIG_REGIONAL.archivo) + '" target="_blank">' +
+    '<img src="' + RUTA_FIG + esc(FIG_REGIONAL.archivo) +
+    '" alt="Señal regional" loading="lazy" style="width:100%;max-width:900px;' +
+    'border:1px solid var(--borde);border-radius:4px"></a></div>'
+  : '<div class="tarjeta"><div class="vacio">Sin figura regional.</div></div>';
 
 }
 </script>
