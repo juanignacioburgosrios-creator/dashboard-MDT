@@ -334,15 +334,12 @@ function pintarGaleria() {
 });
 pintarGaleria();
 
-const FIG_REGIONAL = arr(TENDENCIAS.figuras_regionales)
-  .find((f) => f.archivo === "regional_ventanas.png");
-document.getElementById("g-regional").innerHTML = FIG_REGIONAL
-  ? '<div class="tarjeta">' +
-    '<a href="' + RUTA_FIG + esc(FIG_REGIONAL.archivo) + '" target="_blank">' +
-    '<img src="' + RUTA_FIG + esc(FIG_REGIONAL.archivo) +
-    '" alt="Señal regional" loading="lazy" style="width:100%;max-width:900px;' +
-    'border:1px solid var(--borde);border-radius:4px"></a></div>'
-  : '<div class="tarjeta"><div class="vacio">Sin figura regional.</div></div>';
+document.getElementById("g-regional").innerHTML =
+  '<div class="tarjeta">' +
+  '<a href="' + RUTA_FIG + 'regional_periodos_extendida.png" target="_blank">' +
+  '<img src="' + RUTA_FIG + 'regional_periodos_extendida.png' +
+  '" alt="Señal regional" loading="lazy" style="width:100%;max-width:760px;' +
+  'border:1px solid var(--borde);border-radius:4px"></a></div>';
 
 }
 </script>
