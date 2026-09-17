@@ -128,3 +128,11 @@ select, input[type=search] { padding: 5px 8px; border: 1px solid var(--borde); b
 .tarjetas { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 a.tarjeta-enlace { text-decoration: none; color: inherit; display: block; }
 a.tarjeta-enlace:hover { border-color: var(--acento); box-shadow: 0 1px 6px rgba(31,95,139,.12); }
+
+.descarga-memoria { margin-top: 16px; }
+.boton-descarga { display: inline-block; max-width: 100%; padding: 10px 16px;
+                  border: 1px solid var(--acento); border-radius: 4px;
+                  background: var(--panel); color: var(--acento); font-weight: 600;
+                  text-decoration: none; }
+.boton-descarga:hover { background: #e6f0f6; }
+.boton-descarga:focus-visible { outline: 2px solid var(--acento); outline-offset: 3px; }
